@@ -4,6 +4,11 @@ This project adds **Ogg Opus (`.opus`)** playback to the SNOWSKY ECHO MINI digit
 It patches the official **V3.9.0** firmware (`HIFIEC39.IMG`, **8 GB model**) and replaces the WMA
 decoder, which goes away, with libopus 1.5.2.
 
+<p align="center">
+  <img src="docs/images/echo-mini-playing-opus.jpg" width="600"
+       alt="ECHO MINI playing an Opus file: Daft Punk - High Life, with cover art, tags and the OPUS|48KHZ|16bit|0129kbps line">
+</p>
+
 **Status: validated on the device** (image `HIFIEC50`, October 2026). What works:
 - playback and seeking;
 - tags and the "OPUS" label on the playback screen;
