@@ -1,0 +1,16 @@
+# Firmware images and extractions are Snowsky's property: never commit them.
+*.IMG
+*.img
+*.bin
+out/
+out_fw/
+# Third-party sources (fetched by opus/fetch_libopus.sh) and build products
+opus/opus-1.5.2/
+opus/*.tar.gz
+opus/build/
+experiments/plc_fec/src/
+experiments/plc_fec/out/
+experiments/plc_fec/files/
+venv/
+__pycache__/
+*.raw

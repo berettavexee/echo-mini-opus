@@ -1,0 +1,8 @@
+03_music_128k_tags         decode_insns=1047125560 calls=749 max_call_insns=1543840 insns_per_audio_second=34888485 pcm_fnv=1131274345
+04_frames60ms              decode_insns=999253520 calls=500 max_call_insns=2169880 insns_per_audio_second=33249156 pcm_fnv=2908637014
+05_frames2_5ms_256k        decode_insns=1690809040 calls=749 max_call_insns=2325400 insns_per_audio_second=56358422 pcm_fnv=49763778
+06_mono_32k                decode_insns=565365400 calls=499 max_call_insns=1366120 insns_per_audio_second=28268270 pcm_fnv=2056468713
+07_hybrid_24k              decode_insns=1081589840 calls=749 max_call_insns=1876520 insns_per_audio_second=36036778 pcm_fnv=3148032219
+08_silk_fec12k             decode_insns=310080200 calls=749 max_call_insns=487640 insns_per_audio_second=10336006 pcm_fnv=1336369369
+09_stereo_fec40k           decode_insns=1261542200 calls=749 max_call_insns=1797080 insns_per_audio_second=42051406 pcm_fnv=3785949178
+dp01c                      decode_insns=787912560 calls=749 max_call_insns=1299720 insns_per_audio_second=26251938 pcm_fnv=3633667610

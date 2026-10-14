@@ -1,0 +1,245 @@
+diff -ru a/celt/celt_decoder.c src/celt/celt_decoder.c
+--- a/celt/celt_decoder.c	2026-10-14 18:34:47.985904143 +0200
++++ b/celt/celt_decoder.c	2026-10-14 18:35:12.482303819 +0200
+@@ -601,6 +601,21 @@
+ }
+ #endif
+ 
++#ifdef ECHO_NO_PLC
++/* Echo Mini: no packet-loss concealment. A missing frame (only produced by
++   SILK<->CELT mode transitions in a lossless file) is rendered as silence. */
++static void celt_decode_lost(CELTDecoder * OPUS_RESTRICT st, int N, int LM)
++{
++   int c = 0;
++   const int overlap = st->mode->overlap;
++   do {
++      celt_sig *m = st->_decode_mem + c*(DECODE_BUFFER_SIZE+overlap);
++      OPUS_MOVE(m, m+N, DECODE_BUFFER_SIZE-N+overlap);
++      OPUS_CLEAR(m+DECODE_BUFFER_SIZE-N, N+overlap);
++   } while (++c<st->channels);
++   st->loss_duration = IMIN(10000, st->loss_duration+(1<<LM));
++}
++#else
+ static void celt_decode_lost(CELTDecoder * OPUS_RESTRICT st, int N, int LM
+ #ifdef ENABLE_DEEP_PLC
+       ,LPCNetPLCState *lpcnet
+@@ -966,6 +981,7 @@
+ 
+    RESTORE_STACK;
+ }
++#endif /* ECHO_NO_PLC */
+ 
+ int celt_decode_with_ec_dred(CELTDecoder * OPUS_RESTRICT st, const unsigned char *data,
+       int len, opus_val16 * OPUS_RESTRICT pcm, int frame_size, ec_dec *dec, int accum
+@@ -1293,9 +1309,11 @@
+       for (i=0;i<C*nbEBands;i++)
+          oldBandE[i] = -QCONST16(28.f,DB_SHIFT);
+    }
++#ifndef ECHO_NO_PLC
+    if (st->prefilter_and_fold) {
+       prefilter_and_fold(st, N);
+    }
++#endif
+    celt_synthesis(mode, X, out_syn, oldBandE, start, effEnd,
+                   C, CC, isTransient, LM, st->downsample, silence, st->arch);
+ 
+diff -ru a/silk/dec_API.c src/silk/dec_API.c
+--- a/silk/dec_API.c	2026-10-14 18:34:47.995164450 +0200
++++ b/silk/dec_API.c	2026-10-14 18:34:48.023456125 +0200
+@@ -30,6 +30,11 @@
+ #endif
+ #include "API.h"
+ #include "main.h"
++#ifdef ECHO_NO_FEC
++#define ECHO_IS_LBRR(x) 0
++#else
++#define ECHO_IS_LBRR(x) ((x) == FLAG_DECODE_LBRR)
++#endif
+ #include "stack_alloc.h"
+ #include "os_support.h"
+ 
+@@ -281,12 +286,12 @@
+     /* Get MS predictor index */
+     if( decControl->nChannelsInternal == 2 ) {
+         if(   lostFlag == FLAG_DECODE_NORMAL ||
+-            ( lostFlag == FLAG_DECODE_LBRR && channel_state[ 0 ].LBRR_flags[ channel_state[ 0 ].nFramesDecoded ] == 1 ) )
++            ( ECHO_IS_LBRR(lostFlag) && channel_state[ 0 ].LBRR_flags[ channel_state[ 0 ].nFramesDecoded ] == 1 ) )
+         {
+             silk_stereo_decode_pred( psRangeDec, MS_pred_Q13 );
+             /* For LBRR data, decode mid-only flag only if side-channel's LBRR flag is false */
+             if( ( lostFlag == FLAG_DECODE_NORMAL && channel_state[ 1 ].VAD_flags[ channel_state[ 0 ].nFramesDecoded ] == 0 ) ||
+-                ( lostFlag == FLAG_DECODE_LBRR && channel_state[ 1 ].LBRR_flags[ channel_state[ 0 ].nFramesDecoded ] == 0 ) )
++                ( ECHO_IS_LBRR(lostFlag) && channel_state[ 1 ].LBRR_flags[ channel_state[ 0 ].nFramesDecoded ] == 0 ) )
+             {
+                 silk_stereo_decode_mid_only( psRangeDec, &decode_only_middle );
+             } else {
+@@ -330,7 +335,7 @@
+         has_side = !decode_only_middle;
+     } else {
+         has_side = !psDec->prev_decode_only_middle
+-              || (decControl->nChannelsInternal == 2 && lostFlag == FLAG_DECODE_LBRR && channel_state[1].LBRR_flags[ channel_state[1].nFramesDecoded ] == 1 );
++              || (decControl->nChannelsInternal == 2 && ECHO_IS_LBRR(lostFlag) && channel_state[1].LBRR_flags[ channel_state[1].nFramesDecoded ] == 1 );
+     }
+     channel_state[ 0 ].sPLC.enable_deep_plc = decControl->enable_deep_plc;
+     /* Call decoder for one frame */
+@@ -343,7 +348,7 @@
+             /* Use independent coding if no previous frame available */
+             if( FrameIndex <= 0 ) {
+                 condCoding = CODE_INDEPENDENTLY;
+-            } else if( lostFlag == FLAG_DECODE_LBRR ) {
++            } else if( ECHO_IS_LBRR(lostFlag) ) {
+                 condCoding = channel_state[ n ].LBRR_flags[ FrameIndex - 1 ] ? CODE_CONDITIONALLY : CODE_INDEPENDENTLY;
+             } else if( n > 0 && psDec->prev_decode_only_middle ) {
+                 /* If we skipped a side frame in this packet, we don't
+diff -ru a/silk/decode_frame.c src/silk/decode_frame.c
+--- a/silk/decode_frame.c	2026-10-14 18:34:47.995448708 +0200
++++ b/silk/decode_frame.c	2026-10-14 18:34:48.023579536 +0200
+@@ -30,6 +30,11 @@
+ #endif
+ 
+ #include "main.h"
++#ifdef ECHO_NO_FEC
++#define ECHO_IS_LBRR(x) 0
++#else
++#define ECHO_IS_LBRR(x) ((x) == FLAG_DECODE_LBRR)
++#endif
+ #include "stack_alloc.h"
+ #include "PLC.h"
+ 
+@@ -68,7 +73,7 @@
+     celt_assert( L > 0 && L <= MAX_FRAME_LENGTH );
+ 
+     if(   lostFlag == FLAG_DECODE_NORMAL ||
+-        ( lostFlag == FLAG_DECODE_LBRR && psDec->LBRR_flags[ psDec->nFramesDecoded ] == 1 ) )
++        ( ECHO_IS_LBRR(lostFlag) && psDec->LBRR_flags[ psDec->nFramesDecoded ] == 1 ) )
+     {
+         VARDECL( opus_int16, pulses );
+ #ifdef ENABLE_OSCE
+@@ -116,11 +121,13 @@
+         /********************************************************/
+         /* Update PLC state                                     */
+         /********************************************************/
++#ifndef ECHO_NO_PLC
+         silk_PLC( psDec, psDecCtrl, pOut, 0,
+ #ifdef ENABLE_DEEP_PLC
+             lpcnet,
+ #endif
+             arch );
++#endif
+ 
+         psDec->lossCnt = 0;
+         psDec->prevSignalType = psDec->indices.signalType;
+@@ -130,11 +137,15 @@
+         psDec->first_frame_after_reset = 0;
+     } else {
+         /* Handle packet loss by extrapolation */
++#ifdef ECHO_NO_PLC
++        silk_memset( pOut, 0, L * sizeof( opus_int16 ) );
++#else
+         silk_PLC( psDec, psDecCtrl, pOut, 1,
+ #ifdef ENABLE_DEEP_PLC
+             lpcnet,
+ #endif
+             arch );
++#endif
+ 
+ #ifdef ENABLE_OSCE
+         osce_reset( &psDec->osce, psDec->osce.method );
+@@ -151,12 +162,16 @@
+     /************************************************/
+     /* Comfort noise generation / estimation        */
+     /************************************************/
++#ifndef ECHO_NO_PLC
+     silk_CNG( psDec, psDecCtrl, pOut, L );
++#endif
+ 
+     /****************************************************************/
+     /* Ensure smooth connection of extrapolated and good frames     */
+     /****************************************************************/
++#ifndef ECHO_NO_PLC
+     silk_PLC_glue_frames( psDec, pOut, L );
++#endif
+ 
+     /* Update some decoder state variables */
+     psDec->lagPrev = psDecCtrl->pitchL[ psDec->nb_subfr - 1 ];
+diff -ru a/silk/resampler.c src/silk/resampler.c
+--- a/silk/resampler.c	2026-10-14 18:34:47.995473152 +0200
++++ b/silk/resampler.c	2026-10-14 18:35:27.928005967 +0200
+@@ -88,7 +88,11 @@
+     silk_memset( S, 0, sizeof( silk_resampler_state_struct ) );
+ 
+     /* Input checking */
++#ifdef ECHO_DEC48K_ONLY
++    if( 0 ) {
++#else
+     if( forEnc ) {
++#endif
+         if( ( Fs_Hz_in  != 8000 && Fs_Hz_in  != 12000 && Fs_Hz_in  != 16000 && Fs_Hz_in  != 24000 && Fs_Hz_in  != 48000 ) ||
+             ( Fs_Hz_out != 8000 && Fs_Hz_out != 12000 && Fs_Hz_out != 16000 ) ) {
+             celt_assert( 0 );
+@@ -122,7 +126,13 @@
+             S->resampler_function = USE_silk_resampler_private_IIR_FIR;
+             up2x = 1;
+         }
++#ifdef ECHO_DEC48K_ONLY
+     } else if ( Fs_Hz_out < Fs_Hz_in ) {
++        return -1;   /* decoder output is always 48 kHz */
++    } else if ( 0 ) {
++#else
++    } else if ( Fs_Hz_out < Fs_Hz_in ) {
++#endif
+         /* Downsample */
+          S->resampler_function = USE_silk_resampler_private_down_FIR;
+         if( silk_MUL( Fs_Hz_out, 4 ) == silk_MUL( Fs_Hz_in, 3 ) ) {             /* Fs_out : Fs_in = 3 : 4 */
+@@ -199,10 +209,12 @@
+             silk_resampler_private_IIR_FIR( S, out, S->delayBuf, S->Fs_in_kHz );
+             silk_resampler_private_IIR_FIR( S, &out[ S->Fs_out_kHz ], &in[ nSamples ], inLen - S->Fs_in_kHz );
+             break;
++#ifndef ECHO_DEC48K_ONLY
+         case USE_silk_resampler_private_down_FIR:
+             silk_resampler_private_down_FIR( S, out, S->delayBuf, S->Fs_in_kHz );
+             silk_resampler_private_down_FIR( S, &out[ S->Fs_out_kHz ], &in[ nSamples ], inLen - S->Fs_in_kHz );
+             break;
++#endif
+         default:
+             silk_memcpy( out, S->delayBuf, S->Fs_in_kHz * sizeof( opus_int16 ) );
+             silk_memcpy( &out[ S->Fs_out_kHz ], &in[ nSamples ], ( inLen - S->Fs_in_kHz ) * sizeof( opus_int16 ) );
+diff -ru a/src/opus_decoder.c src/src/opus_decoder.c
+--- a/src/opus_decoder.c	2026-10-14 18:34:47.989800360 +0200
++++ b/src/opus_decoder.c	2026-10-14 18:34:48.023268459 +0200
+@@ -422,7 +422,11 @@
+ #endif
+ #endif
+ 
++#ifdef ECHO_NO_FEC
++     lost_flag = data == NULL;
++#else
+      lost_flag = data == NULL ? 1 : 2 * !!decode_fec;
++#endif
+      decoded_samples = 0;
+      do {
+         /* Call SILK decoder */
+@@ -552,7 +556,11 @@
+       if (mode != st->prev_mode && st->prev_mode > 0 && !st->prev_redundancy)
+          MUST_SUCCEED(celt_decoder_ctl(celt_dec, OPUS_RESET_STATE));
+       /* Decode CELT */
++      #ifdef ECHO_NO_FEC
++      celt_ret = celt_decode_with_ec_dred(celt_dec, data,
++#else
+       celt_ret = celt_decode_with_ec_dred(celt_dec, decode_fec ? NULL : data,
++#endif
+                                      len, pcm, celt_frame_size, &dec, celt_accum
+ #ifdef ENABLE_DEEP_PLC
+                                      , &st->lpcnet
+@@ -742,7 +750,11 @@
+ 
+    data += offset;
+ 
++#ifdef ECHO_NO_FEC
++   if (0)
++#else
+    if (decode_fec)
++#endif
+    {
+       int duration_copy;
+       int ret;
