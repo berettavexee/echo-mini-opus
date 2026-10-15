@@ -39,11 +39,9 @@ MP3, FLAC and Ogg Vorbis keep working as before.
 | **`HIFIEC52`** (recommended) | libopus 1.5.2 **with a small decoder-only patch**, built with LTO and libopus's ARM inline assembly | Same features. 8.8 KB less code and 2–13 % fewer instructions per second of audio. Same audio fidelity (identical SNR against the floating-point reference). Marker "[6]". |
 | `HIFIEC50` | libopus 1.5.2 **unmodified** | Reference build. Marker "[5]". |
 
-The `HIFIEC52` patch (`opus/patches/libopus-decoder-only.diff`, 61 added lines) only adds an
-early `return` to 15 encoder-only functions and to the SILK down-sampling resampler, behind
-`ECHO_DECODER_ONLY`; nothing a decoder executes is changed. libopus's packet-loss concealment
-and FEC are kept in both builds: removing them was evaluated and rejected (no measurable CPU gain
-for music, see `experiments/plc_fec/`). Details in `docs/REPORT.md`, section 18.
+The `HIFIEC52` changes to libopus only disable encoder code that a player never runs. Developers
+interested in how the decoder was fitted into the firmware, optimised and validated will find
+the details in **[docs/OPUS_PORTING.md](docs/OPUS_PORTING.md)**.
 
 ### Known limits
 - **8 GB model only** (`HIFIECxx.IMG`). The 512 MB model (`MINIVxx.IMG`) is not supported.
@@ -71,6 +69,7 @@ Then copy `HIFIEC52.IMG` **alone** to the root of the internal storage and reboo
 | `opus/patches/libopus-decoder-only.diff` | The decoder-only patch applied to libopus for `HIFIEC52`. |
 | `opus/bench/` | QEMU benchmark (`mps2-an385`, Cortex-M3): instructions per second of audio. |
 | `tools/` | Unicorn emulators running the real firmware code (decoding, tags, cover art, label, content sniffer), and disassembly helpers. |
+| `docs/OPUS_PORTING.md` | Developer notes: how Opus was fitted into the firmware, optimised and validated, and a checklist for porting it to another player. |
 | `docs/REPORT.md` | Technical reverse-engineering report: file format, overlays, codec interface, memory, fixes, tests. |
 | `docs/IMAGE_HISTORY.md` | History of the test images and of the defects found on hardware. |
 | `experiments/plc_fec/` | Evaluation (not adopted) of removing PLC and FEC from libopus. |
@@ -91,9 +90,7 @@ python3 rknanofw.py patch-opus HIFIEC39.IMG opus/build/arm/opus74.elf HIFIEC50.I
 sha256sum HIFIEC50.IMG             # 4958e56c4feea92909e8e86db33f330b0c47cf11fa3be8eaae0ac19ae86e8296
 ```
 With this toolchain, the resulting images are bit-identical to the ones produced by the patches.
-`make variant` combines `LTO=1` (a partial LTO link, because `ld` crashes when LTO meets
-`--enable-non-contiguous-regions`) with `-DOPUS_ARM_INLINE_ASM -DECHO_DECODER_ONLY -DECHO_DIV32
--DECHO_STRIP_DIAG`. Another
+What `make variant` changes, and why, is explained in `docs/OPUS_PORTING.md`, section 7. Another
 GCC version will give a different image, probably working but untested.
 
 Off-device validation:
