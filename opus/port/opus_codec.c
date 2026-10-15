@@ -57,7 +57,9 @@ static struct {
     int      ready;                 /* buffer index handed out by GETBUFFER                */
     uint32_t frames[2];
     int      eos;
+#if defined(OPUS_DIAG) || !defined(ECHO_STRIP_DIAG)
     int      diag;                  /* != 0: diagnostic beeps instead of audio (see diag_open) */
+#endif
     /* Ogg page reader */
     uint8_t  lace[255];
     int      nsegs, seg;
@@ -234,7 +236,17 @@ static int open_stream(void)
     if (s.last_granule) {
         uint32_t samples = (uint32_t)(s.last_granule - s.pre_skip);
         s.length_ms = samples / 48;
+#ifdef ECHO_DIV32
+        /* kbit/s = bytes * 8 / ms, in 32 bits (no 64-bit division): q*8 + r*8/ms, r < ms.
+         * Same kbps as the exact value, which is all the player displays. */
+        if (s.length_ms) {
+            uint32_t bytes = s.file_size - s.data_start;
+            uint32_t q = bytes / s.length_ms, r = bytes % s.length_ms;
+            s.bitrate = (q * 8 + r * 8 / s.length_ms) * 1000;
+        }
+#else
         s.bitrate = samples ? (uint32_t)((uint64_t)(s.file_size - s.data_start) * 8 * 48000 / samples) : 0;
+#endif
     }
     if (!s.bitrate) s.bitrate = 128000;
 
@@ -244,6 +256,7 @@ static int open_stream(void)
     return 0;
 }
 
+#if defined(OPUS_DIAG) || !defined(ECHO_STRIP_DIAG)
 /* ---------------- diagnostic mode ----------------
  * When OPEN fails on the device, the main core would only show "Format Not Supported!".
  * Instead the file "plays" 60 s of beeps: N beeps of 150 ms (1 kHz) then 1 s of silence,
@@ -275,6 +288,7 @@ static int diag_open(int step)
     s.frames[0] = diag_fill(0);
     return 1;
 }
+#endif
 
 /* Decode into pcm[idx] until TARGET_FRAMES frames are ready. Returns frames produced. */
 static uint32_t fill(int idx)
@@ -338,8 +352,18 @@ static int seek_ms(uint32_t ms)
 
 static uint32_t now_ms(void)
 {
+#if defined(OPUS_DIAG) || !defined(ECHO_STRIP_DIAG)
     int64_t p = s.diag ? s.pos : s.pos - s.pre_skip;
+#else
+    int64_t p = s.pos - s.pre_skip;
+#endif
+#ifdef ECHO_DIV32
+    if (p <= 0) return 0;
+    if (p > 0xFFFFFFFF) return 0xFFFFFFFFu / 48;               /* > 24.8 h: saturate */
+    return (uint32_t)p / 48;
+#else
     return p > 0 ? (uint32_t)(p / 48) : 0;
+#endif
 }
 
 #ifdef OPUS_DIAG
@@ -376,14 +400,20 @@ int OpusCodec(int subfn, void *a1, void *a2, void *a3)
         return 1;
     case SUBFN_DECODE: {
         int nx = s.ready ^ 1;
+#if defined(OPUS_DIAG) || !defined(ECHO_STRIP_DIAG)
         uint32_t f = s.diag ? diag_fill(nx) : fill(nx);
+#else
+        uint32_t f = fill(nx);
+#endif
         if (!f) return 0;                                      /* end of stream -> message 6 */
         s.frames[nx] = f;
         s.ready = nx;
         return 1;
     }
     case SUBFN_SEEK:
+#if defined(OPUS_DIAG) || !defined(ECHO_STRIP_DIAG)
         if (s.diag) { s.pos = (int64_t)(uint32_t)(uintptr_t)a1 * 48; return 1; }
+#endif
         if (!seek_ms((uint32_t)(uintptr_t)a1)) return 0;
         return 1;
     case SUBFN_CLOSE:

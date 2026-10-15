@@ -14,3 +14,5 @@ experiments/plc_fec/files/
 venv/
 __pycache__/
 *.raw
+opus/opus-1.5.2-var/
+opus/build-*/

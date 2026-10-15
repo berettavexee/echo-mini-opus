@@ -413,3 +413,41 @@ The JPEG decoder rejects progressive JPEGs, whatever the audio format, Vorbis in
 - Back to stock: `STOCK_RECOVERY/HIFIEC51.IMG` (09-04).
 
 **Hardware result (2026-10-14): cover art is displayed** on both test albums (Daft Punk, Lebanon Hanover). HIFIEC50 is the validated release.
+
+## 18. Optimised build (LTO, ARM inline assembly, unused code removed) — HIFIEC52
+**Setup.**
+- `opus/fetch_libopus.sh` also creates `opus/opus-1.5.2-var`: the official sources plus `opus/patches/libopus-decoder-only.diff`.
+- The Makefile takes `OPUS=`, `PORT=`, `BUILD=` and `LTO=1`; `make variant` builds `opus/build-var/arm/opus74.elf`. The default build is unchanged (HIFIEC50 is still reproduced bit for bit).
+- **LTO**: `ld` crashes (segfault) when LTO is combined with `--enable-non-contiguous-regions`. The Makefile therefore runs the LTO code generation as a partial link (`-r -flinker-output=nolto-rel`, without `--gc-sections` so that `.codecfunc` survives), then the usual scripted link.
+
+| Step (cumulative) | Code | Constants | Total |
+|---|---|---|---|
+| HIFIEC50 | 54,072 | 20,910 | 74,982 |
+| + LTO + `OPUS_ARM_INLINE_ASM` (libopus's `fixed_armv4.h` / `macros_armv4.h`: `smull`/`smlal`, valid on Cortex-M3) | 50,316 | 20,915 | 71,231 |
+| + `ECHO_DECODER_ONLY` (15 encoder-only functions and `down_FIR` return immediately; resampler down-sampling branches removed) | 46,456 | 20,655 | 67,111 |
+| + `ECHO_DIV32` (bitrate and current time computed with 32-bit divisions) | 46,424 | 20,655 | 67,079 |
+| + `ECHO_STRIP_DIAG` (beep code only with `OPUS_DIAG`): `__aeabi_(u)ldivmod` and `__udivmoddi4` are gone | **45,316** | **20,559** | **65,875** (−9,107, −12 %) |
+
+Separately: LTO alone −1,056 B, ARM inline assembly alone −2,792 B.
+
+The encoder-only functions are linked in the first place because `bands.c` and `rate.c` share code between encoder and decoder and pick the path with a run-time flag. They are: the range encoder `ec_enc_*` (11), `alg_quant` (and through it `op_pvq_search`), `encode_pulses`, `stereo_itheta` and `intensity_stereo`.
+
+**CPU** (QEMU `mps2-an385`, instructions per second of audio, 30 s per file):
+- full build: −1.8 % (2.5 ms frames) to −13 % (SILK), −7.7 % on a Daft Punk track;
+- the worst case per call drops by 2 to 12 %;
+- nearly all of the gain comes from the ARM inline assembly: LTO alone gives −0.5 % on CELT and +1.5 % on SILK.
+
+**Accuracy.**
+- LTO and the stubs do not change the PCM (bit-identical).
+- The ARM inline assembly changes CELT rounding; SILK stays bit-identical. Against the floating-point `opusdec` reference, the SNR is **the same** to within 0.01 dB (69.3 to 74.5 dB depending on the file).
+- The complete image (`patch-opus`, all areas respected) run through `tools/emu74.py` (the real module-74 runtime): PCM identical to QEMU, stack ≤ 3.8 KB, same durations.
+- The reported bitrate is now truncated to the kbit/s (142,505 → 142,000). The screen shows the same value, because the firmware already truncates (`emu_label.py`: `0142kbps` in both cases).
+
+**Hardware result (2026-10-15).** `HIFIEC52` (2026-09-05, marker "[6]") flashed; all 5 tests pass:
+- the "[6]" marker is shown;
+- both albums play, with tags and cover art;
+- fast forward and seeking work;
+- no dropouts, including on the 2.5 ms-frame file;
+- MP3, FLAC and OGG are unchanged.
+
+**HIFIEC52 is validated on hardware.** Back to stock: `HIFIEC53` (2026-09-06).

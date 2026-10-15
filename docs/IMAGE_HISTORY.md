@@ -1,11 +1,11 @@
 # ECHO MINI V3.9.0 with Ogg Opus: history of the test images
 
 > **Note for this repository.** This is the log of the successive test images flashed on the
-> device, newest first. The `.IMG` files it mentions are **not** distributed. Only `HIFIEC50` (and
-> the recovery image `HIFIEC51`) can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
+> device, newest first. The `.IMG` files it mentions are **not** distributed. Only `HIFIEC50`,
+> `HIFIEC52` and the recovery images `HIFIEC51`/`HIFIEC53` can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
 > by rebuilding (see `INSTALL.md`). The test files of `test_opus/` are not distributed either.
 
-**Status (2026-10-14): `HIFIEC50` is validated on the device** (Opus playback, tags, "OPUS" label
+**Status (2026-10-15): `HIFIEC52` (recommended) and `HIFIEC50` are validated on the device** (Opus playback, tags, "OPUS" label
 and cover art on two albums; MP3 and FLAC unchanged). Images `HIFIEC40` to `HIFIEC48` each had a
 defect, fixed since (see below). This firmware is unofficial and flashing it carries a risk of
 bricking the device.
@@ -18,7 +18,13 @@ bricking the device.
 | `HIFIEC46` | 2026-08-30 | large `OpusTags` fix, diagnostic "[3]" | **playback validated** |
 | `HIFIEC48` | 2026-09-01 | tags, cover, "OPUS" label, normal build "[4]" | tags and label OK, no cover art |
 | **`HIFIEC50`** | **2026-09-03** | cover fix, "[5]" | **everything validated** |
-| `HIFIEC41/43/45/47/49/51` | | stock firmware re-dated, to roll back | — |
+| **`HIFIEC52`** | **2026-09-05** | optimised decoder (LTO, ARM inline asm, decoder-only libopus), "[6]" | **everything validated** |
+| `HIFIEC41/43/45/47/49/51/53` | | stock firmware re-dated, to roll back | — |
+
+## HIFIEC52: optimised decoder
+Same firmware patches as `HIFIEC50`; only the decoder plug-in changes. It is built with LTO and libopus's ARM inline assembly, with the encoder-only libopus code and the plug-in's diagnostic code removed and its 64-bit divisions replaced. The result is 8.8 KB less code and 2–13 % fewer instructions per second of audio, with the same audio fidelity. Details and measurements: `docs/REPORT.md`, section 18.
+
+**Hardware result (2026-10-15):** the "[6]" marker is shown; both albums play with tags and cover art; fast forward and seeking work; no dropouts (including the 2.5 ms-frame file); MP3, FLAC and OGG unchanged.
 
 ## HIFIEC50: cover art for Opus files
 **Observed with HIFIEC48 (2026-10-14).** Playback, tags and the label work, but no cover art is shown (Lebanon Hanover and Daft Punk albums).
