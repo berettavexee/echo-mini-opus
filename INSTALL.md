@@ -10,7 +10,12 @@ sha256sum HIFIEC39.IMG
 The patches refuse any other file.
 
 ## 2. Produce the image
-Recommended build (`HIFIEC52`, optimised decoder):
+Recommended build (`HIFIEC56`, optimised Opus decoder and full-precision Ogg Vorbis):
+```
+python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC56.ecpatch HIFIEC56.IMG
+# -> SHA-256 01ac8b5c51a9e058d9b0cd78df4b1163c224416dd711b846e58a88f35b7f9f26
+```
+Or the same Opus decoder with the stock Vorbis decoder (`HIFIEC52`):
 ```
 python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC52.ecpatch HIFIEC52.IMG
 # -> SHA-256 0aa16307000b12f9bbdc2c3a8df8f005cb90f5133741f810a2c6d0b4c21ba858
@@ -20,13 +25,13 @@ Or the reference build with an unmodified libopus (`HIFIEC50`):
 python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC50.ecpatch HIFIEC50.IMG
 # -> SHA-256 4958e56c4feea92909e8e86db33f330b0c47cf11fa3be8eaae0ac19ae86e8296
 ```
-You can also rebuild either image from source (see `README.md`): the result is identical.
+You can also rebuild any of these images from source (see `README.md`): the result is identical.
 
 ## 3. Flash
 1. Connect the player over USB.
 2. Delete any `HIFIECxx.IMG` file from the root of the internal storage: the loader takes the
    first one it finds.
-3. Copy the image (`HIFIEC52.IMG` or `HIFIEC50.IMG`) **alone** to the root of the internal storage.
+3. Copy the image (`HIFIEC56.IMG`, `HIFIEC52.IMG` or `HIFIEC50.IMG`) **alone** to the root of the internal storage.
 4. Remove the microSD (TF) card.
 5. Safely eject the player, then reboot it: the update starts by itself.
 6. Refresh the media library so that it re-reads the tags.
@@ -38,22 +43,25 @@ installed if it is dated after the firmware already in place:
 |---|---|---|
 | `HIFIEC50` | 2026-09-03 | Opus, unmodified libopus |
 | `HIFIEC51` | 2026-09-04 | stock firmware, to roll back from `HIFIEC50` |
-| `HIFIEC52` | 2026-09-05 | Opus, optimised decoder (recommended) |
-| `HIFIEC53` | 2026-09-06 | stock firmware, to roll back from `HIFIEC52` (or from any image above) |
+| `HIFIEC52` | 2026-09-05 | Opus, optimised decoder |
+| `HIFIEC53` | 2026-09-06 | stock firmware, to roll back from `HIFIEC52` |
+| `HIFIEC56` | 2026-09-09 | Opus (optimised) + full-precision Vorbis (recommended) |
+| `HIFIEC57` | 2026-09-10 | stock firmware, to roll back from `HIFIEC56` (or from any image above) |
 
-`HIFIEC52` can be installed over the stock firmware or over `HIFIEC50`. Going from `HIFIEC52` back
-to `HIFIEC50` requires moving `HIFIEC50`'s date forward first (see section 4).
+`HIFIEC56` can be installed over the stock firmware or over any image above. Going back to an
+older image requires moving its date forward first (see section 4).
 
 ## 4. Back to the stock firmware
 ```
-python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC53_stock_recovery.ecpatch HIFIEC53.IMG
+python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC57_stock_recovery.ecpatch HIFIEC57.IMG
+# -> SHA-256 a244f3ede5bc68710f6911feff269fc923d4c74b09d42f0fecdc5ccf1acd6278
 ```
-`HIFIEC53.IMG` is the stock firmware, with no change other than its date moved to 2026-09-06 (and
-the CRC recomputed), so that it is considered newer than both Opus images. Install it the same
-way, **alone** at the root. (`HIFIEC51_stock_recovery.ecpatch`, dated 2026-09-04, only works after
-`HIFIEC50`.)
+`HIFIEC57.IMG` is the stock firmware, with no change other than its date moved to 2026-09-10 (and
+the CRC recomputed), so that it is considered newer than all the images above. Install it the same
+way, **alone** at the root. (`HIFIEC53_stock_recovery.ecpatch` and `HIFIEC51_stock_recovery.ecpatch`,
+dated 2026-09-06 and 2026-09-04, only work after `HIFIEC52` and `HIFIEC50` respectively.)
 
-A future official firmware dated before 2026-09-06 might be ignored. In that case, or to switch
+A future official firmware dated before 2026-09-10 might be ignored. In that case, or to switch
 back to an older image, move its date forward with:
 ```
 python3 rknanofw.py redate FW.IMG DAYS OUT.IMG
@@ -61,6 +69,7 @@ python3 rknanofw.py redate FW.IMG DAYS OUT.IMG
 
 ## 5. Check
 - An `.opus` file plays, with its tags, cover art and the `OPUS|48KHZ|16bit|…` line.
-- MP3, FLAC and OGG files still play, with their cover art.
-- Seeking works.
-- On failure, the message reads "Format Not Supported! [6]" (`HIFIEC52`) or "… [5]" (`HIFIEC50`).
+- MP3, FLAC and OGG files still play, with their cover art (baseline JPEG only, see the README).
+- Seeking works, in `.opus` and `.ogg` files.
+- On failure, the message reads "Format Not Supported! [8]" (`HIFIEC56`), "… [6]" (`HIFIEC52`) or
+  "… [5]" (`HIFIEC50`).

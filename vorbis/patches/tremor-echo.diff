@@ -1,0 +1,171 @@
+diff --git a/asm_arm.h b/asm_arm.h
+index 3a3716d..5bbe199 100644
+--- a/asm_arm.h
++++ b/asm_arm.h
+@@ -105,6 +105,13 @@ static inline void XNPROD31(ogg_int32_t  a, ogg_int32_t  b,
+ #ifndef _V_CLIP_MATH
+ #define _V_CLIP_MATH
+ 
++#ifdef ECHO_SSAT
++/* ECHO MINI: Cortex-M3 (ARMv7-M) has a signed saturation instruction. */
++static inline ogg_int32_t CLIP_TO_15(ogg_int32_t x) {
++  asm("ssat\t%0, #16, %0" : "+r"(x));
++  return(x);
++}
++#else
+ static inline ogg_int32_t CLIP_TO_15(ogg_int32_t x) {
+   int tmp;
+   asm volatile("subs	%1, %0, #32768\n\t"
+@@ -117,6 +124,7 @@ static inline ogg_int32_t CLIP_TO_15(ogg_int32_t x) {
+ 	       : "cc");
+   return(x);
+ }
++#endif
+ 
+ #endif
+ 
+diff --git a/codebook.c b/codebook.c
+index ec7602e..5a11844 100644
+--- a/codebook.c
++++ b/codebook.c
+@@ -186,6 +186,24 @@ static int _make_words(char *l,long n,ogg_uint32_t *r,long quantvals,
+   return 0;
+ }
+ 
++#ifdef ECHO_HEAP_ALLOCA
++/* ECHO MINI: the HiFi core has an 8 KB stack; the header-time scratch buffers (up to
++   8*entries bytes) go to the heap and are released at the end of vorbis_book_unpack(). */
++static void *echo_scratch[4];
++static int echo_nscratch;
++static void *echo_scratch_alloc(size_t n){
++  void *p=_ogg_malloc(n);
++  if(echo_nscratch<4)echo_scratch[echo_nscratch++]=p;
++  return p;
++}
++static void echo_scratch_free(void){
++  while(echo_nscratch)_ogg_free(echo_scratch[--echo_nscratch]);
++}
++#define SCRATCH_ALLOC(n) echo_scratch_alloc(n)
++#else
++#define SCRATCH_ALLOC(n) alloca(n)
++#endif
++
+ static int _make_decode_table(codebook *s,char *lengthlist,long quantvals,
+ 			      oggpack_buffer *opb,int maptype){
+   int i;
+@@ -201,7 +219,7 @@ static int _make_decode_table(codebook *s,char *lengthlist,long quantvals,
+     return 0;
+   }
+ 
+-  work=alloca((s->used_entries*2-2)*sizeof(*work));
++  work=SCRATCH_ALLOC((s->used_entries*2-2)*sizeof(*work));
+   if(_make_words(lengthlist,s->entries,work,quantvals,s,opb,maptype))return 1;
+   s->dec_table=_ogg_malloc((s->used_entries*(s->dec_leafw+1)-2)*
+ 			   s->dec_nodeb);
+@@ -355,7 +373,7 @@ int vorbis_book_unpack(oggpack_buffer *opb,codebook *s){
+   switch((int)oggpack_read(opb,1)){
+   case 0:
+     /* unordered */
+-    lengthlist=(char *)alloca(sizeof(*lengthlist)*s->entries);
++    lengthlist=(char *)SCRATCH_ALLOC(sizeof(*lengthlist)*s->entries);
+ 
+     /* allocated but unused entries? */
+     if(oggpack_read(opb,1)){
+@@ -389,7 +407,7 @@ int vorbis_book_unpack(oggpack_buffer *opb,codebook *s){
+       long length=oggpack_read(opb,5)+1;
+ 
+       s->used_entries=s->entries;
+-      lengthlist=(char *)alloca(sizeof(*lengthlist)*s->entries);
++      lengthlist=(char *)SCRATCH_ALLOC(sizeof(*lengthlist)*s->entries);
+       
+       for(i=0;i<s->entries;){
+ 	long num=oggpack_read(opb,_ilog(s->entries-i));
+@@ -451,7 +469,7 @@ int vorbis_book_unpack(oggpack_buffer *opb,codebook *s){
+ 	/* use dec_type 1: vector of packed values */
+ 
+ 	/* need quantized values before  */
+-	s->q_val=alloca(sizeof(ogg_uint16_t)*quantvals);
++	s->q_val=SCRATCH_ALLOC(sizeof(ogg_uint16_t)*quantvals);
+ 	for(i=0;i<quantvals;i++)
+ 	  ((ogg_uint16_t *)s->q_val)[i]=oggpack_read(opb,s->q_bits);
+ 	
+@@ -541,10 +559,16 @@ int vorbis_book_unpack(oggpack_buffer *opb,codebook *s){
+ 
+   if(oggpack_eop(opb))goto _eofout;
+ 
++#ifdef ECHO_HEAP_ALLOCA
++  echo_scratch_free();
++#endif
+   return 0;
+  _errout:
+  _eofout:
+   vorbis_book_clear(s);
++#ifdef ECHO_HEAP_ALLOCA
++  echo_scratch_free();
++#endif
+   return -1;
+ }
+ 
+diff --git a/info.c b/info.c
+index be5df49..7852f02 100644
+--- a/info.c
++++ b/info.c
+@@ -128,10 +128,14 @@ void vorbis_info_clear(vorbis_info *vi){
+ 
+     if(ci->floor_param){
+       for(i=0;i<ci->floors;i++) /* unpack does the range checking */
++#ifdef ECHO_NO_FLOOR0
++	if(ci->floor_param[i])floor1_free_info(ci->floor_param[i]);
++#else
+ 	if(ci->floor_type[i])
+ 	  floor1_free_info(ci->floor_param[i]);
+ 	else
+ 	  floor0_free_info(ci->floor_param[i]);
++#endif
+       _ogg_free(ci->floor_param);
+       _ogg_free(ci->floor_type);
+     }
+@@ -244,10 +248,15 @@ static int _vorbis_unpack_books(vorbis_info *vi,oggpack_buffer *opb){
+   for(i=0;i<ci->floors;i++){
+     ci->floor_type[i]=oggpack_read(opb,16);
+     if(ci->floor_type[i]<0 || ci->floor_type[i]>=VI_FLOORB)goto err_out;
++#ifdef ECHO_NO_FLOOR0
++    if(!ci->floor_type[i])goto err_out;          /* floor 0 (LSP, unused since 2001): not supported */
++    ci->floor_param[i]=floor1_info_unpack(vi,opb);
++#else
+     if(ci->floor_type[i])
+       ci->floor_param[i]=floor1_info_unpack(vi,opb);
+     else
+       ci->floor_param[i]=floor0_info_unpack(vi,opb);
++#endif
+     if(!ci->floor_param[i])goto err_out;
+   }
+ 
+diff --git a/mapping0.c b/mapping0.c
+index 23e3b8e..8f560c7 100644
+--- a/mapping0.c
++++ b/mapping0.c
+@@ -133,10 +133,12 @@ int mapping_inverse(vorbis_dsp_state *vd,vorbis_info_mapping *info){
+ 			  floor1_memosize(ci->floor_param[floorno]));
+       floormemo[i]=floor1_inverse1(vd,ci->floor_param[floorno],floormemo[i]);
+     }else{
++#ifndef ECHO_NO_FLOOR0
+       /* floor 0 */
+       floormemo[i]=alloca(sizeof(*floormemo[i])*
+ 			  floor0_memosize(ci->floor_param[floorno]));
+       floormemo[i]=floor0_inverse1(vd,ci->floor_param[floorno],floormemo[i]);
++#endif
+     }
+     
+     if(floormemo[i])
+@@ -220,8 +222,10 @@ int mapping_inverse(vorbis_dsp_state *vd,vorbis_info_mapping *info){
+       /* floor 1 */
+       floor1_inverse2(vd,ci->floor_param[floorno],floormemo[i],pcm);
+     }else{
++#ifndef ECHO_NO_FLOOR0
+       /* floor 0 */
+       floor0_inverse2(vd,ci->floor_param[floorno],floormemo[i],pcm);
++#endif
+     }
+   }
+ 

@@ -1,13 +1,14 @@
 # HIFIEC39.IMG reverse engineering (SNOWSKY ECHO MINI V3.9.0, 8 GB model)
 
-Tool: `rknanofw.py` (`info`, `extract`, `crc [--fix]`, `redate`, `patch-opus`).
+Tool: `rknanofw.py` (`info`, `extract`, `crc [--fix]`, `redate`, `patch-opus [--vorbis]`).
 
 > **Note for this repository.** This report is the working log of the reverse-engineering effort,
 > written as the work progressed. Paths `re/…` refer to the repository root. The `out/`
 > (extraction) and `out_fw/` (images) directories are **not** distributed: no image or extract of
 > the Snowsky firmware is included. Use `patch/` to produce the image from your own copy of
-> `HIFIEC39.IMG`. Image names (`HIFIEC40` … `HIFIEC51`) are the successive test builds; only
-> `HIFIEC50` and the recovery image `HIFIEC51` can be reproduced.
+> `HIFIEC39.IMG`. Image names (`HIFIEC40` … `HIFIEC57`) are the successive test builds; only
+> `HIFIEC50`, `HIFIEC52`, `HIFIEC56` and the recovery images `HIFIEC51`, `HIFIEC53` and `HIFIEC57`
+> can be reproduced.
 
 ## 1. Identification
 - SoC: **Rockchip RKnano**; the header says "RKnano SDK 1.0". Code is Thumb-2 for Cortex-M, on two cores.
@@ -451,3 +452,79 @@ The encoder-only functions are linked in the first place because `bands.c` and `
 - MP3, FLAC and OGG are unchanged.
 
 **HIFIEC52 is validated on hardware.** Back to stock: `HIFIEC53` (2026-09-06).
+
+## 19. The stock Ogg Vorbis decoder: Tremor "lowmem" at low accuracy
+**Identification.**
+- Module 77 (`codec_ogg`, 62.9 KB of code and 53.6 KB of data) is Rockchip's Ogg Vorbis library. Its 13 modules (`bitwise`, `codebook`, `dsp`, `floor0`, `floor1`, `floor_lookup`, `framing`, `info`, `mapping0`, `mdct`, `misc`, `res012`, `vorbisfile`) are exactly those of the **`lowmem` branch of Tremor** (Xiph's integer decoder, `gitlab.xiph.org/xiph/tremor`).
+- It is built with **`_LOW_ACCURACY_`**. Proof in the firmware: the 8-bit tables `sincos_lookup0` (1,026 B) and `sincos_lookup1` (1,024 B), which Tremor only produces in that mode, are present byte for byte in module 77's data (`0x1be5c` and `0x1c25e`).
+
+**Age.** In August 2019 the `lowmem` branch received two out-of-bounds write fixes (`codebook` and `floor0`), back-ported from the main branch. They post-date the Rockchip library. The risk on a player is low (it takes a crafted file), but real.
+
+**Quality** (Tremor `lowmem` built on the PC and compared with ffmpeg's floating-point decoder, 16-bit PCM, no offset):
+
+| File | libvorbis (`oggdec`) | Tremor, normal accuracy | Tremor `_LOW_ACCURACY_` (ECHO MINI) |
+|---|---|---|---|
+| music, q5, 30 s | 84.6 dB | 78.5 dB | **43.3 dB** |
+| music, q8, 30 s | 66.6 dB | 60.4 dB | **38.4 dB** |
+| real album track (Beast In Black), full | 89.8 dB | 83.9 dB | **41.4 dB** |
+
+Low accuracy costs **20 to 40 dB of SNR**, i.e. about 7 effective bits instead of 13 to 14. At normal accuracy, the remaining gap to libvorbis comes from Tremor's integer arithmetic.
+
+**Codec alone under QEMU** (`vorbis/bench/build.sh` / `run.sh`, `mps2-an385`, `-icount shift=0`, Tremor `lowmem` `89a7534`, `-mcpu=cortex-m3 -Os`): the ARM output is bit-identical to Tremor on the PC; full accuracy costs only **+2.8 %** instructions (27.1 M → 27.9 M per second of audio at 48 kHz), but the constants grow from 13.7 KB to **44.3 KB** (`vwin8192` 16 KB, `vwin4096` 8 KB, `sincos_lookup0/1` and `vwin2048` 4 KB each). With `vorbisfile`, Tremor keeps all the comments in memory, including base64 cover art: the heap peaks at **188 KB** on a real track. The comments must therefore be skipped.
+
+## 20. Full-precision Vorbis in module 77 (HIFIEC54)
+**Map of module 77** (reachability analysis, compared with module 74):
+- **Code**: runtime shared with module 74 up to `0x1b00`, then shifted (`0x2940`→`0x25e0`, `0x29ba`→`0x265a`, `0x24ec`→`0x218c`, flags `0x2d30/0x2d4c`→`0xe054/0xe070`). Rockchip library at `0x29d0`–`0xe054`, end of the runtime at `0xe054`–`0xf5d8`.
+- **Data**: runtime at `0x01020000`–`0x01023480`. The library then occupies `0x01023480`–`0x01029888` (zeros) and `0x010298a0`–`0x0102d148` (tables, including the 8-bit ones). In between sits a **runtime structure at `0x01029898`**: the two PCM buffer pointers written by `0x3c6`. The end, `0x0102d148`–`0x0102d184`, belongs to the runtime, with the `CodecFunc` table at `0x0102d15c` (`CODEC_OGG` = entry 4, `0x0102d16c`).
+- **BSS**: zeroed by the runtime from `0x0102d184` to `0x0105e9d4`: info block at `+0x200`, file buffer `0x0102d4dc`–`0x010434dc`, library BSS `0x010434e0`–`0x0105e998`, then the **event flags at `0x0105e998`**.
+- **Runtime variables**: file size at `0x01022228` (`0x01022224` in module 74), positions at `0x0102222c`.
+- **`0x3c6(4, …)`** reserves two 8 KB PCM buffers at the end of the file buffer (`0x0103f4dc`, `0x010414dc`) and sets `SRC_Num_Forehead` (`0x01022104`) to 0.
+- **The stock wrapper** (`0x29d0`) calls `ov_open`/`ov_read` and outputs 512 stereo frames per DECODE (mono is duplicated, CHANNELS reports 1). On a read error it reopens the file (up to 200 times). Times are in ms.
+
+**New plug-in** (`vorbis/`):
+- **Decoder**: Tremor `lowmem` `89a7534` (Xiph, BSD) at **full accuracy**, reduced to the decoder core (headers, synthesis, PCM output).
+- **Ogg layer**: Tremor's (`framing.c`, `vorbisfile.c`) is not used. `vorbis/port77/vorbis_codec.c` reuses the Ogg reader of the Opus plug-in: the comment packet (tags and cover art, often over 70 KB) is **streamed without being stored**, and Tremor gets an empty comment header instead. Tags and cover art are read by the main firmware, not by the codec, so nothing is lost.
+- **Seeking**: bisection over the pages, then exact realignment on the granule position, dropping the frames before the target (sample-accurate).
+- **Tremor patch** (`vorbis/patches/tremor-echo.diff`, 41 lines added):
+  - `ECHO_NO_FLOOR0`: floor 0, which no encoder has produced since 2001, is rejected;
+  - `ECHO_HEAP_ALLOCA`: the scratch buffers used while unpacking the codebooks go to the heap; with `alloca` the stack reached **7.7 KB of 8 KB**.
+- **Size**: 15.4 KB of code, 42 KB of constants, 110 KB of BSS including an 88 KB heap. Everything fits in the freed areas; no intermediate-precision tables were needed.
+- `rknanofw.py patch-opus … --vorbis vorbis/build/arm/vorbis77.elf` wipes the freed areas and writes the plug-in, the same way as for module 74.
+
+**Validation.**
+- **QEMU** (`make -C vorbis bench`): output bit-identical to full-accuracy Tremor on the PC, on 3 files plus mono, 22.05 kHz and 96 kHz; seeking sample-accurate at 5 positions; heap peak 20 to 33 KB (118 KB with `vorbisfile` on files with cover art); 24.8 to 26.5 M instructions per second of audio at 44.1/48 kHz, 44 M at 96 kHz (slightly less than the stock library).
+- **Complete image** (`tools/emu77.py`, the real module-77 runtime): playback and seek to 20 s bit-identical on 3 files; all 10 tracks of a real album open; stack ≤ 868 B. The Opus module is unchanged; outside module 77, the only bytes that differ from `HIFIEC52` are the date, the marker and the CRC.
+- Expected fidelity on the device: **60 to 84 dB** SNR instead of 38 to 43 dB.
+
+**Hardware result (2026-10-16).** `HIFIEC54` (2026-09-07, marker "[7]") flashed: the marker is shown; `.ogg` files play with their tags and duration; fast forward and seeking work; no dropouts or noise; Opus, MP3 and FLAC unchanged. Cover art of `.ogg` files is shown, once **progressive JPEG** covers (which the firmware's image decoder never displays, whatever the audio format) are re-encoded as baseline with `tools/cover_baseline.py`.
+
+**HIFIEC54 is validated on hardware.** It is superseded by `HIFIEC56` (section 21), which is the build distributed here.
+
+## 21. Tremor's ARM assembly and `ssat` (HIFIEC56)
+**Changes** (`vorbis/`):
+- `-D_ARM_ASSEM_` enables Tremor's `asm_arm.h`: `MULT32`/`MULT31`/`MULT31_SHIFT15` with `smull`, and `XPROD31`/`XNPROD31` (the MDCT rotations) with chained `smull`/`smlal`. It was written for ARMv4: its conditional instructions need IT blocks in Thumb-2, which `-Wa,-mimplicit-it=thumb` inserts. `lsp_loop_asm` only serves floor 0, which is compiled out.
+- `ECHO_SSAT` (added to `patches/tremor-echo.diff`): `CLIP_TO_15` becomes one `ssat #16` instead of 5 conditional instructions.
+- Code: 15,444 → 15,500 B (+56). Constants, heap and BSS unchanged.
+
+**CPU** (QEMU, millions of instructions per second of audio; "stock-like" = Tremor `lowmem` with `_LOW_ACCURACY_` and `vorbisfile`, rebuilt with GCC, an approximation of the stock module):
+
+| File | Stock-like | HIFIEC54 (C) | `_ARM_ASSEM_` | **HIFIEC56** (+ `ssat`) |
+|---|---|---|---|---|
+| music q5, 48 kHz | 27.10 | 26.48 | 25.26 | **24.68** (−6.8 %; −8.9 % vs stock-like) |
+| music q8, 48 kHz | 27.14 | 26.50 | 25.29 | **24.71** (−6.8 %) |
+| Beast In Black, 44.1 kHz | 25.42 | 24.77 | 23.65 | **23.12** (−6.7 %; −9.0 % vs stock-like) |
+| mono q3 | — | 11.85 | 11.24 | **10.95** (−7.6 %) |
+| 96 kHz | — | 44.36 | 41.93 | **40.77** (−8.1 %) |
+
+The worst DECODE call drops by about 4 %.
+
+**Accuracy.** The output is no longer bit-identical to C Tremor: the assembly computes `MULT31` and `XPROD31` as `(x·y >> 32) << 1` instead of `x·y >> 31`. SNR against the float decoder: 78.53 / 60.43 / 82.74 / 78.62 (mono) / 78.54 (22 kHz) / 78.60 (96 kHz) dB, against 78.46 / 60.35 / 82.67 / 78.56 / — / 78.36 dB in C. Maximum error 1.6 LSB. Same quality.
+
+**Validation.**
+- QEMU: seeking sample-accurate at 15 positions (3 files × 5); the `ssat` variant gives exactly the same output as `_ARM_ASSEM_` alone.
+- Complete image (`tools/emu77.py`): 10 s of playback bit-identical to QEMU on 5 files (stereo, mono, 22.05, 44.1, 96 kHz); exact seek (3 cases); all 47 `.ogg` files of a real library open; stack ≤ 868 B.
+- Compared with `HIFIEC54`, only module 77, the date (and its copy), the "[8]" marker (20 languages) and the CRC change. The Opus module is identical.
+
+**Hardware result (2026-10-16).** `HIFIEC56` (2026-09-09, marker "[8]") flashed: all tests pass (marker, `.ogg` playback with cover art and tags, seeking, Opus/MP3/FLAC unchanged).
+
+**HIFIEC56 is validated on hardware.** Back to stock: `HIFIEC57` (2026-09-10).

@@ -1,11 +1,11 @@
-# ECHO MINI V3.9.0 with Ogg Opus: history of the test images
+# ECHO MINI V3.9.0 with Ogg Opus and full-precision Vorbis: history of the test images
 
 > **Note for this repository.** This is the log of the successive test images flashed on the
 > device, newest first. The `.IMG` files it mentions are **not** distributed. Only `HIFIEC50`,
-> `HIFIEC52` and the recovery images `HIFIEC51`/`HIFIEC53` can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
+> `HIFIEC52`, `HIFIEC56` and the recovery images `HIFIEC51`/`HIFIEC53`/`HIFIEC57` can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
 > by rebuilding (see `INSTALL.md`). The test files of `test_opus/` are not distributed either.
 
-**Status (2026-10-15): `HIFIEC52` (recommended) and `HIFIEC50` are validated on the device** (Opus playback, tags, "OPUS" label
+**Status (2026-10-16): `HIFIEC56` (recommended), `HIFIEC52` and `HIFIEC50` are validated on the device** (Opus playback, tags, "OPUS" label
 and cover art on two albums; MP3 and FLAC unchanged). Images `HIFIEC40` to `HIFIEC48` each had a
 defect, fixed since (see below). This firmware is unofficial and flashing it carries a risk of
 bricking the device.
@@ -19,7 +19,19 @@ bricking the device.
 | `HIFIEC48` | 2026-09-01 | tags, cover, "OPUS" label, normal build "[4]" | tags and label OK, no cover art |
 | **`HIFIEC50`** | **2026-09-03** | cover fix, "[5]" | **everything validated** |
 | **`HIFIEC52`** | **2026-09-05** | optimised decoder (LTO, ARM inline asm, decoder-only libopus), "[6]" | **everything validated** |
-| `HIFIEC41/43/45/47/49/51/53` | | stock firmware re-dated, to roll back | — |
+| `HIFIEC54` | 2026-09-07 | `HIFIEC52` + full-precision Ogg Vorbis decoder (C), "[7]" | everything validated (superseded) |
+| **`HIFIEC56`** | **2026-09-09** | `HIFIEC54` with Tremor's ARM assembly and `ssat`, "[8]" | **everything validated** |
+| `HIFIEC41/43/45/47/49/51/53/55/57` | | stock firmware re-dated, to roll back | — |
+
+## HIFIEC56: Tremor's ARM assembly
+Same as `HIFIEC54`, with Tremor's ARM inline assembly (`smull`/`smlal`) and a one-instruction `ssat` clip: about 7 % fewer instructions for Vorbis decoding (9 % fewer than the stock decoder), same SNR. Details: `docs/REPORT.md`, section 21.
+
+**Hardware result (2026-10-16):** all tests pass ("[8]" marker, `.ogg` playback with cover art and tags, seeking, Opus/MP3/FLAC unchanged).
+
+## HIFIEC54: full-precision Ogg Vorbis
+Same Opus decoder and firmware patches as `HIFIEC52`. The stock Ogg Vorbis decoder (module 77) is Tremor built at low accuracy (8-bit tables, 38–43 dB SNR); it is replaced by Tremor at full accuracy (60–84 dB) with the project's own Ogg reader, which skips the comment packet (tags and cover art are read by the main firmware). Details and measurements: `docs/REPORT.md`, sections 19 and 20.
+
+**Hardware result (2026-10-16):** the "[7]" marker is shown; `.ogg` files play with tags and duration; fast forward and seeking work; no dropouts or noise; Opus, MP3 and FLAC unchanged. `.ogg` cover art is shown once progressive JPEG covers are re-encoded as baseline (`tools/cover_baseline.py`): the firmware never displays progressive JPEGs, whatever the format.
 
 ## HIFIEC52: optimised decoder
 Same firmware patches as `HIFIEC50`; only the decoder plug-in changes. It is built with LTO and libopus's ARM inline assembly, with the encoder-only libopus code and the plug-in's diagnostic code removed and its 64-bit divisions replaced. The result is 8.8 KB less code and 2–13 % fewer instructions per second of audio, with the same audio fidelity. Details and measurements: `docs/REPORT.md`, section 18.

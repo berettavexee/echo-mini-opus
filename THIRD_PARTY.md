@@ -14,13 +14,29 @@ Not included in the repository: `opus/fetch_libopus.sh` downloads the official a
   down-sampling resampler return immediately. The patch is distributed under libopus's
   BSD-3-Clause license.
 
-The compiled libopus code is contained in `patch/HIFIEC50.ecpatch` and `patch/HIFIEC52.ecpatch`;
+The compiled libopus code is contained in `patch/HIFIEC50.ecpatch`, `patch/HIFIEC52.ecpatch` and
+`patch/HIFIEC56.ecpatch`;
 its license (copied to `LICENSES/libopus-COPYING`) applies to that part of the patches.
+
+## Tremor (branch `lowmem`, commit `89a7534`) — BSD-3-Clause
+Copyright (c) 2002, Xiph.org Foundation.
+
+Not included in the repository: `vorbis/fetch_tremor.sh` clones
+`https://gitlab.xiph.org/xiph/tremor.git` and checks out commit `89a7534` (2019-08-09).
+
+`HIFIEC56` uses it with `vorbis/patches/tremor-echo.diff` (a modified version): behind
+`ECHO_NO_FLOOR0`, floor type 0 is rejected; behind `ECHO_HEAP_ALLOCA`, the codebook scratch buffers
+are allocated on the heap instead of the stack; behind `ECHO_SSAT`, `CLIP_TO_15` uses the ARMv7-M
+`ssat` instruction. Tremor's own ARM assembly (`_ARM_ASSEM_`) is enabled. Tremor's Ogg layer (`framing.c`, `vorbisfile.c`) is
+not used. The patch is distributed under Tremor's BSD-3-Clause license.
+
+The compiled Tremor code is contained in `patch/HIFIEC56.ecpatch`; its license (copied to
+`LICENSES/tremor-COPYING`) applies to that part of the patch.
 
 ## SNOWSKY ECHO MINI firmware
 The `HIFIEC39.IMG` firmware is the property of SNOWSKY. It is **not** distributed here, nor are
 the modified images or extracts of its code or resources. The binary patch only contains the
-bytes written by this project (Opus decoder, fixes, date and checksum); it only applies to an
+bytes written by this project (Opus and Vorbis decoders, fixes, date and checksum); it only applies to an
 official copy of `HIFIEC39.IMG`, verified by SHA-256.
 
 This project is neither affiliated with nor endorsed by SNOWSKY.

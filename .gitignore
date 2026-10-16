@@ -16,3 +16,6 @@ __pycache__/
 *.raw
 opus/opus-1.5.2-var/
 opus/build-*/
+vorbis/tremor-lowmem/
+vorbis/build*/
+vorbis/bench/out/

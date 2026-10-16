@@ -6,6 +6,7 @@ Usage:
   rknanofw.py extract FW.IMG OUTDIR      # raw parts, overlay ELFs, images, UI strings
   rknanofw.py crc     FW.IMG [--fix]     # verify / recompute trailing Rockchip CRC32
   rknanofw.py patch-opus FW.IMG opus74.elf OUT.IMG [--days N|--keep-date] [--marker TXT]  # WMA -> Ogg Opus
+          [--vorbis vorbis77.elf]                 # + full-precision Vorbis in overlay 77
   rknanofw.py redate  FW.IMG DAYS OUT.IMG  # shift build date (header + its copy), fix CRC
 
 Format (reverse engineered from V3.9.0):
@@ -140,6 +141,13 @@ OPUS_OVL = 74
 OPUS_FREE = [(0x00002ec4, 0x00010138), (0x000110a4, 0x00012800), (0x00012858, 0x000162c0),
              (0x0102347c, 0x010267c0)]
 EXT_OLD, EXT_NEW = b"MP1MP2MP3WMAWAV", b"MP1MP2MP3OPUWAV"
+# Optional full-precision Vorbis decoder: replaces the Rockchip Tremor build (_LOW_ACCURACY_) of
+# overlay 77 by vorbis/build/arm/vorbis77.elf. Freed areas (HiFi view, docs/REPORT.md section 20):
+# library code, library data (zeros, then tables); kept for the runtime: 0x01029888-0x010298a0
+# (PCM buffer pointers at 0x01029898) and 0x0102d148-0x0102d184 (variables, CodecFunc table).
+VORBIS_OVL = 77
+VORBIS_FREE = [(0x000029d0, 0x0000e054), (0x01023480, 0x01029888), (0x010298a0, 0x0102d148),
+               (0x0102d16c, 0x0102d170)]                  # CodecFunc[CODEC_OGG]
 # Resident content sniffer sub_030697e0 (run before playback) rewrites the extension from the
 # file header: "OggS" -> "OGG", which sends .opus files to the Vorbis codec ("Format Not
 # Supported!"). The "OggS" case at 0x03069cd2 is replaced: if byte 0x1d of the page is 'p'
@@ -233,25 +241,21 @@ def mark_text(d, sid, suffix, allowed):
         allowed.update(range(a, a + len(new)))
 
 
-def patch_opus(src, elf, dst, days=1, marker=None):
-    d = bytearray(open(src, "rb").read())
-    if rkcrc(d[:-4]) != struct.unpack("<I", d[-4:])[0]:
-        sys.exit("input CRC mismatch")
-    c, base, ents = overlays(bytes(d))
-    cl, ce, cs, dl, de, ds, _, _ = ents[OPUS_OVL]
-    if (ce, cs, de, ds) != (0x01000000, 0x162c0, 0x01020000, 0x67c0):
-        sys.exit("overlay 74 does not look like the V3.9.0 WMA module")
+def write_module(d, ents, base, ovl, shape, free, elf, cf_off, allowed, label):
+    """Wipe the freed areas of HiFi overlay 'ovl' and write the sections of 'elf' into them."""
+    cl, ce, cs, dl, de, ds, _, _ = ents[ovl]
+    if (ce, cs, de, ds) != shape:
+        sys.exit(f"overlay {ovl} does not look like the V3.9.0 module")
     code_off = 0x200 + cl - base                              # file offset of HiFi address 0
     data_off = 0x200 + dl - base                              # file offset of 0x01020000
 
     def foff(addr, n):
-        for lo, hi in OPUS_FREE:
+        for lo, hi in free:
             if lo <= addr and addr + n <= hi:
                 return (code_off + addr) if addr < 0x01000000 else (data_off + addr - de)
-        sys.exit(f"section at 0x{addr:08x}+0x{n:x} outside the freed areas")
+        sys.exit(f"section at 0x{addr:08x}+0x{n:x} outside the freed areas of overlay {ovl}")
 
-    allowed = set()
-    for lo, hi in OPUS_FREE:                                  # wipe the WMA library first
+    for lo, hi in free:                                       # wipe the old library first
         o = foff(lo, hi - lo)
         d[o:o + hi - lo] = bytes(hi - lo)
         allowed.update(range(o, o + hi - lo))
@@ -259,10 +263,23 @@ def patch_opus(src, elf, dst, days=1, marker=None):
         o = foff(addr, len(blob))
         d[o:o + len(blob)] = blob
         print(f"  {nm:10s} 0x{addr:08x} +0x{len(blob):05x} -> file 0x{o:08x}")
-    cf = struct.unpack_from("<I", d, data_off + 0x347c)[0]
-    if cf & 1 == 0 or not 0x2ec4 <= cf & ~1 < 0x162c0:
-        sys.exit(f"CodecFunc[1] = 0x{cf:08x} is not a Thumb code pointer")
-    print(f"  CodecFunc[WMA] = 0x{cf:08x}")
+    cf = struct.unpack_from("<I", d, data_off + cf_off)[0]
+    if cf & 1 == 0 or not free[0][0] <= cf & ~1 < free[0][1]:
+        sys.exit(f"{label} = 0x{cf:08x} is not a Thumb code pointer into the new code")
+    print(f"  {label} = 0x{cf:08x}")
+
+
+def patch_opus(src, elf, dst, days=1, marker=None, vorbis=None):
+    d = bytearray(open(src, "rb").read())
+    if rkcrc(d[:-4]) != struct.unpack("<I", d[-4:])[0]:
+        sys.exit("input CRC mismatch")
+    c, base, ents = overlays(bytes(d))
+    allowed = set()
+    write_module(d, ents, base, OPUS_OVL, (0x01000000, 0x162c0, 0x01020000, 0x67c0), OPUS_FREE,
+                 elf, 0x347c, allowed, "CodecFunc[WMA]")
+    if vorbis:
+        write_module(d, ents, base, VORBIS_OVL, (0x01000000, 0xf5d8, 0x01020000, 0xd184),
+                     VORBIS_FREE, vorbis, 0xd16c, allowed, "CodecFunc[OGG]")
 
     hits = [i for i in range(len(d)) if d.startswith(EXT_OLD, i)]
     if len(hits) != 5:
@@ -328,7 +345,8 @@ def main():
     if cmd == "patch-opus":
         a = sys.argv
         patch_opus(fw, a[3], a[4], 0 if "--keep-date" in a else int(a[a.index("--days") + 1]) if "--days" in a else 1,
-                   a[a.index("--marker") + 1] if "--marker" in a else None)
+                   a[a.index("--marker") + 1] if "--marker" in a else None,
+                   a[a.index("--vorbis") + 1] if "--vorbis" in a else None)
         return
     d = open(fw, "rb").read()
     if cmd == "crc":
