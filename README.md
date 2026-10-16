@@ -168,7 +168,7 @@ More ambitious custom firmware projects exist for this player, and are worth a l
 - **[ReChord](https://github.com/brnomt/ReChord)**: a from-source custom firmware for the ECHO
   MINI, in progress.
 
-This project is independent from both and shares no code with them.
+This project is independent from both and shares no code with them (but I will be happy to share).
 
 ## License
 - This project's code: BSD-3-Clause (`LICENSE`).
