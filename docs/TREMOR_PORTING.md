@@ -6,7 +6,7 @@ at reduced accuracy, how it was replaced in place by a full-precision build of T
 choices were made and why, and how each step was validated without a debugger. Players only need
 `README.md` and `INSTALL.md`.
 
-The ECHO MINI-specific facts (addresses, overlay numbers) are in `REPORT.md`, sections 19 to 21.
+The ECHO MINI-specific facts (addresses, overlay numbers) are in `REPORT.md`, sections 19 to 22.
 This page focuses on the method and on what should transfer to other devices.
 
 ## 1. Why replace a decoder that works
@@ -150,7 +150,14 @@ Notes:
   reference for the emulated image, and the SNR against float is the reference for quality.
 
 CPU budget: about 23–25 M instructions per second of audio at 44.1/48 kHz, 41 M at 96 kHz,
-against about 25–27 M for the stock decoder. The stock clock scenario of module 77 is kept.
+against about 25–27 M for the stock decoder.
+
+**Clock profile (HIFIEC58).** The firmware picks the clocks per codec from a table, and the
+stock Ogg profile asks for 400–480 MHz on the audio core, far more than the decoder needs (its
+heaviest 512-frame call is about 66 M instructions per second of audio). `HIFIEC58` gives the
+Ogg profiles the MP3 values (300 MHz). Patch the profile **values**, not the selector: the
+firmware recomputes the profile id separately when it leaves the codec, and an asymmetric change
+would leave a profile active (`REPORT.md` §22).
 
 ## 8. Checklist for another device
 1. Identify the Vorbis library (module names, strings), then the accuracy mode by searching the

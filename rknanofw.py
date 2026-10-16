@@ -7,6 +7,7 @@ Usage:
   rknanofw.py crc     FW.IMG [--fix]     # verify / recompute trailing Rockchip CRC32
   rknanofw.py patch-opus FW.IMG opus74.elf OUT.IMG [--days N|--keep-date] [--marker TXT]  # WMA -> Ogg Opus
           [--vorbis vorbis77.elf]                 # + full-precision Vorbis in overlay 77
+          [--ogg-clock-mp3]                       # Ogg Vorbis clock profiles = MP3's
   rknanofw.py redate  FW.IMG DAYS OUT.IMG  # shift build date (header + its copy), fix CRC
 
 Format (reverse engineered from V3.9.0):
@@ -269,7 +270,30 @@ def write_module(d, ents, base, ovl, shape, free, elf, cf_off, allowed, label):
     print(f"  {label} = 0x{cf:08x}")
 
 
-def patch_opus(src, elf, dst, days=1, marker=None, vorbis=None):
+# Clock profiles (resident code): FREQ_EnterModule(id) sums the {PLL, sys core, sys HCLK, PCLK,
+# HiFi core, HiFi HCLK} rows of all active modules (table of 36 x 7 words, row = {id, 6 x Hz}).
+# Ogg Vorbis selects ids 14-17 (only used by the OGG enter/exit selectors of overlays 33/34; id 18
+# is shared with APE and left alone). --ogg-clock-mp3 gives them the MP3 row (id 5).
+FREQ_TABLE = 0x0307627c
+FREQ_OGG_IDS = (14, 15, 16, 17)
+FREQ_OGG_OLD = {14: (300, 80, 80, 80, 400, 400), 15: (300, 80, 80, 80, 400, 400),
+                16: (300, 80, 80, 80, 400, 400), 17: (480, 200, 200, 80, 480, 480)}
+FREQ_MP3 = (300, 150, 150, 75, 300, 300)
+
+
+def patch_ogg_clock(d, ents, base, allowed):
+    r = ents[0]
+    for i in FREQ_OGG_IDS:
+        o = 0x200 + r[0] - base + FREQ_TABLE + 28 * i - r[1]
+        row = struct.unpack_from("<7I", d, o)
+        if row != (i,) + tuple(m * 1000000 for m in FREQ_OGG_OLD[i]):
+            sys.exit(f"clock profile {i} does not match V3.9.0: {row}")
+        struct.pack_into("<6I", d, o + 4, *(m * 1000000 for m in FREQ_MP3))
+        allowed.update(range(o + 4, o + 28))
+    print(f"  clock profiles {FREQ_OGG_IDS} (Ogg Vorbis) = MP3 {FREQ_MP3} MHz")
+
+
+def patch_opus(src, elf, dst, days=1, marker=None, vorbis=None, ogg_clock_mp3=False):
     d = bytearray(open(src, "rb").read())
     if rkcrc(d[:-4]) != struct.unpack("<I", d[-4:])[0]:
         sys.exit("input CRC mismatch")
@@ -280,6 +304,8 @@ def patch_opus(src, elf, dst, days=1, marker=None, vorbis=None):
     if vorbis:
         write_module(d, ents, base, VORBIS_OVL, (0x01000000, 0xf5d8, 0x01020000, 0xd184),
                      VORBIS_FREE, vorbis, 0xd16c, allowed, "CodecFunc[OGG]")
+    if ogg_clock_mp3:
+        patch_ogg_clock(d, ents, base, allowed)
 
     hits = [i for i in range(len(d)) if d.startswith(EXT_OLD, i)]
     if len(hits) != 5:
@@ -346,7 +372,7 @@ def main():
         a = sys.argv
         patch_opus(fw, a[3], a[4], 0 if "--keep-date" in a else int(a[a.index("--days") + 1]) if "--days" in a else 1,
                    a[a.index("--marker") + 1] if "--marker" in a else None,
-                   a[a.index("--vorbis") + 1] if "--vorbis" in a else None)
+                   a[a.index("--vorbis") + 1] if "--vorbis" in a else None, "--ogg-clock-mp3" in a)
         return
     d = open(fw, "rb").read()
     if cmd == "crc":

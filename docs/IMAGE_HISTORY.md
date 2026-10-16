@@ -2,10 +2,10 @@
 
 > **Note for this repository.** This is the log of the successive test images flashed on the
 > device, newest first. The `.IMG` files it mentions are **not** distributed. Only `HIFIEC50`,
-> `HIFIEC52`, `HIFIEC56` and the recovery images `HIFIEC51`/`HIFIEC53`/`HIFIEC57` can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
+> `HIFIEC52`, `HIFIEC56`, `HIFIEC58` and the recovery images `HIFIEC51`/`HIFIEC53`/`HIFIEC57`/`HIFIEC59` can be reproduced, from your own `HIFIEC39.IMG`, with `patch/` or
 > by rebuilding (see `INSTALL.md`). The test files of `test_opus/` are not distributed either.
 
-**Status (2026-10-16): `HIFIEC56` (recommended), `HIFIEC52` and `HIFIEC50` are validated on the device** (Opus playback, tags, "OPUS" label
+**Status (2026-10-16): `HIFIEC58` (recommended), `HIFIEC56`, `HIFIEC52` and `HIFIEC50` are validated on the device** (Opus playback, tags, "OPUS" label
 and cover art on two albums; MP3 and FLAC unchanged). Images `HIFIEC40` to `HIFIEC48` each had a
 defect, fixed since (see below). This firmware is unofficial and flashing it carries a risk of
 bricking the device.
@@ -21,7 +21,13 @@ bricking the device.
 | **`HIFIEC52`** | **2026-09-05** | optimised decoder (LTO, ARM inline asm, decoder-only libopus), "[6]" | **everything validated** |
 | `HIFIEC54` | 2026-09-07 | `HIFIEC52` + full-precision Ogg Vorbis decoder (C), "[7]" | everything validated (superseded) |
 | **`HIFIEC56`** | **2026-09-09** | `HIFIEC54` with Tremor's ARM assembly and `ssat`, "[8]" | **everything validated** |
-| `HIFIEC41/43/45/47/49/51/53/55/57` | | stock firmware re-dated, to roll back | — |
+| **`HIFIEC58`** | **2026-09-11** | `HIFIEC56` with the Ogg clock profiles set to the MP3 one, "[9]" | **everything validated** |
+| `HIFIEC41/43/45/47/49/51/53/55/57/59` | | stock firmware re-dated, to roll back | — |
+
+## HIFIEC58: MP3 clock profile for Ogg Vorbis
+Same decoders as `HIFIEC56`. The four clock profiles that the firmware selects for Ogg files (ids 14–17) get the values of the MP3 profile: audio core 300 MHz instead of 400 MHz (480 MHz for some bitrates), main core 150 MHz instead of 80 MHz. Details: `docs/REPORT.md`, section 22.
+
+**Hardware result (2026-10-16):** all tests pass on every format. The effect on battery life is not measured.
 
 ## HIFIEC56: Tremor's ARM assembly
 Same as `HIFIEC54`, with Tremor's ARM inline assembly (`smull`/`smlal`) and a one-instruction `ssat` clip: about 7 % fewer instructions for Vorbis decoding (9 % fewer than the stock decoder), same SNR. Details: `docs/REPORT.md`, section 21.

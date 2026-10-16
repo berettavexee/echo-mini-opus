@@ -1,13 +1,14 @@
 # HIFIEC39.IMG reverse engineering (SNOWSKY ECHO MINI V3.9.0, 8 GB model)
 
-Tool: `rknanofw.py` (`info`, `extract`, `crc [--fix]`, `redate`, `patch-opus [--vorbis]`).
+Tool: `rknanofw.py` (`info`, `extract`, `crc [--fix]`, `redate`, `patch-opus [--vorbis] [--ogg-clock-mp3]`).
 
 > **Note for this repository.** This report is the working log of the reverse-engineering effort,
 > written as the work progressed. Paths `re/…` refer to the repository root. The `out/`
 > (extraction) and `out_fw/` (images) directories are **not** distributed: no image or extract of
 > the Snowsky firmware is included. Use `patch/` to produce the image from your own copy of
-> `HIFIEC39.IMG`. Image names (`HIFIEC40` … `HIFIEC57`) are the successive test builds; only
-> `HIFIEC50`, `HIFIEC52`, `HIFIEC56` and the recovery images `HIFIEC51`, `HIFIEC53` and `HIFIEC57`
+> `HIFIEC39.IMG`. Image names (`HIFIEC40` … `HIFIEC59`) are the successive test builds; only
+> `HIFIEC50`, `HIFIEC52`, `HIFIEC56`, `HIFIEC58` and the recovery images `HIFIEC51`, `HIFIEC53`,
+> `HIFIEC57` and `HIFIEC59`
 > can be reproduced.
 
 ## 1. Identification
@@ -528,3 +529,29 @@ The worst DECODE call drops by about 4 %.
 **Hardware result (2026-10-16).** `HIFIEC56` (2026-09-09, marker "[8]") flashed: all tests pass (marker, `.ogg` playback with cover art and tags, seeking, Opus/MP3/FLAC unchanged).
 
 **HIFIEC56 is validated on hardware.** Back to stock: `HIFIEC57` (2026-09-10).
+
+
+## 22. Clock profiles, and the MP3 profile for Ogg Vorbis (HIFIEC58)
+**Mechanism** (resident code):
+- `0x03068918(id)` (`FREQ_EnterModule`, the name used by the Rockchip SDK) sets bit `id` in a 64-bit mask at `0x0301dc68`; `0x03068950(id)` (`FREQ_ExitModule`) clears it. `0x03068994`/`0x030689e0` are deferred variants (flag at `0x03005904`).
+- `0x030687b0` recomputes the clocks: it **adds up**, column by column, the profiles of all active modules (36 rows of 7 words at `0x0307627c`, row index = id), clamps the sums between profile 1 (`{96, 96, 96, 96, 0, 0}` MHz) and profile 35 (`{480, 200, 200, 80, 480, 480}`), then calls `0x030684ea`. Empty mask → profile 1; bit 0 → profile 0 (all zero, 24 MHz crystal).
+- `0x030684ea` picks a PLL frequency (≤ 1.6 GHz) and dividers (≤ 8) that produce columns 2 and 5; below 24 MHz it stays on the crystal.
+- **Columns** (inferred): PLL, main ("sys") core, its HCLK, PCLK, audio ("cal"/HiFi) core, its HCLK. Non-audio profiles have 0 for the audio core.
+
+**Per-codec selection** (`0x0308685c`, overlay 33; reads the codec type at `0x0304af7c` and the stream info: +8 sample rate, +0xc bitrate, +0x10 channels). The matching exit selector is in overlay 34 (`0x0308b0xx`) and recomputes the same id.
+
+| Codec | Profile(s) | PLL / sys / PCLK / audio core (MHz) | Condition |
+|---|---|---|---|
+| MP3 | 5, 6 | 300 / 150 / 75 / 300 | ≤ 128 kb/s and ≤ 44.1 kHz → 5, else 6 (same values) |
+| WMA (**Opus** in these builds) | 7, 8 | 200 / 150 / 75 / 300 | same values |
+| AAC | 10, 11 | 200 / 150 / 75 / 300 | as MP3 |
+| WAV | 9 | 450 / 148 / 48 / 450 | always |
+| OGG (stock) | 14–16 | 300 / 80 / 80 / 400 | mono ≤ 240 kb/s, or stereo 53.7–380 kb/s |
+| OGG (stock) | 17, 18 | 480 / 200 / 80 / 480 | otherwise (18 only for stereo > 500 kb/s or mono > 240 kb/s) |
+| APE | 18 | 480 / 200 / 80 / 480 | always |
+| FLAC | 19 | 400 / 100 / 100 / 400 | always |
+| ALAC, DFF, DSF | 20, 21, 22 | 480 / 200 / 80 / 480 | always |
+
+**HIFIEC58.** Ids 14–17 are only used by the OGG enter/exit selectors (all calls to the frequency API were listed across the 90 overlays). Their rows get the MP3 values `{300, 150, 150, 75, 300, 300}`; id 18, shared with APE, is left alone. Patching the values rather than the selector keeps enter and exit symmetric. `rknanofw.py patch-opus … --ogg-clock-mp3` checks the stock values first. The audio core goes from 400 (or 480) to 300 MHz, and the main core from 80 to 150 MHz: the energy balance is unknown. The heaviest Vorbis DECODE call (about 0.77 M instructions per 11.6 ms of audio) leaves a margin of about 4× at 300 MHz. Compared with `HIFIEC56`, only those 4 table rows, the date, the marker and the CRC change.
+
+**Hardware result (2026-10-16).** `HIFIEC58` (2026-09-11, marker "[9]") flashed: all tests pass on every format. Battery life was not measured (4-segment gauge). Back to stock: `HIFIEC59` (2026-09-12).
