@@ -75,6 +75,10 @@ back to an older image, move its date forward with:
 python3 rknanofw.py redate FW.IMG DAYS OUT.IMG
 ```
 
+If the player no longer boots at all, see the **Recovery** section of the README (community
+MaskROM procedure, [livetrack.club/debrick](https://livetrack.club/debrick), not tested by this
+project).
+
 ## 5. Check
 - An `.opus` file plays, with its tags, cover art and the `OPUS|48KHZ|16bit|…` line.
 - MP3, FLAC and OGG files still play, with their cover art (baseline JPEG only, see the README).

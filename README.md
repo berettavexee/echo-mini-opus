@@ -19,8 +19,9 @@ What works:
 
 MP3 and FLAC keep working as before.
 
-> ⚠️ **Disclaimer.** This is unofficial firmware patch. Flashing it may brick the device, and no
-> low-level recovery procedure (MaskROM mode) is documented for this model. Use at your own risk.
+> ⚠️ **Disclaimer.** This is unofficial firmware patch. Flashing it may brick the device. A
+> community MaskROM recovery procedure exists (see [Recovery](#recovery)) but was not tested by
+> this project. Use at your own risk.
 > This project is neither affiliated with nor endorsed by SNOWSKY.
 > This is a one man project, mostly done with AI, tested on one device. You have been warned.
 
@@ -87,6 +88,16 @@ python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC58.ecpatch HIFIEC58.
 ```
 Then copy `HIFIEC58.IMG` **alone** to the root of the internal storage and reboot.
 
+## Recovery
+If an update goes wrong but the player still boots, install the back-to-stock image (see
+`INSTALL.md`, section 4).
+
+If the player no longer boots at all (black screen), the community documents a low-level
+recovery through the Rockchip **MaskROM** mode: the player is put into MaskROM with the reset
+button, then a stock firmware image is written over USB with `rkdeveloptool`. See
+**[livetrack.club/debrick](https://livetrack.club/debrick)**. This procedure was **not tested by
+this project**; follow it at your own risk.
+
 ## Repository layout
 | Path | Role |
 |---|---|
@@ -149,6 +160,15 @@ make -C opus bench OPUS_FILE=/absolute/path/f.opus                      # QEMU: 
 venv/bin/python tools/emu77.py HIFIEC58.IMG f.ogg out.raw --seconds 10  # emulated module 77 (Vorbis)
 make -C vorbis bench OGG_FILE=/absolute/path/f.ogg                      # QEMU: Vorbis CPU cost, heap peak
 ```
+
+## Acknowledgments
+More ambitious custom firmware projects exist for this player, and are worth a look:
+- **[RECHO](https://recho.atzkey.workers.dev/)** by atzkey: a from-scratch firmware for the ECHO
+  MINI (gapless playback, improved navigation, files in name order).
+- **[ReChord](https://github.com/brnomt/ReChord)**: a from-source custom firmware for the ECHO
+  MINI, in progress.
+
+This project is independent from both and shares no code with them.
 
 ## License
 - This project's code: BSD-3-Clause (`LICENSE`).

@@ -168,4 +168,4 @@ Verified by running the image's function under Unicorn (`tools/emu_sniff.py`):
 9. Check that MP3, FLAC, OGG and the other formats still play, with their cover art.
 
 ## Back to the stock firmware
-See `INSTALL.md`, section 4. If the player no longer boots at all, there is no documented recovery procedure (Rockchip MaskROM mode not studied for this model).
+See `INSTALL.md`, section 4. If the player no longer boots at all, the community documents a MaskROM recovery procedure ([livetrack.club/debrick](https://livetrack.club/debrick)), not tested by this project.
