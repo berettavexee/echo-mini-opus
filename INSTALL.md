@@ -30,7 +30,7 @@ Or the reference build with an unmodified libopus (`HIFIEC50`):
 python3 patch/apply_patch.py apply HIFIEC39.IMG patch/HIFIEC50.ecpatch HIFIEC50.IMG
 # -> SHA-256 4958e56c4feea92909e8e86db33f330b0c47cf11fa3be8eaae0ac19ae86e8296
 ```
-You can also rebuild any of these images from source (see `README.md`): the result is identical.
+You can also rebuild any of these images from source (see `docs/BUILDING.md`): the result is identical.
 
 ## 3. Flash
 1. Connect the player over USB.
