@@ -76,6 +76,6 @@ codec runtime. How each step was validated: `docs/OPUS_PORTING.md` §6 and
 | `tools/` | Unicorn emulators running the real firmware code (Opus and Vorbis decoding, tags, cover art, label, content sniffer), disassembly helpers, and `cover_baseline.py`. |
 | `docs/OPUS_PORTING.md` | Developer notes: how Opus was fitted into the firmware, optimised and validated, and a checklist for porting it to another player. |
 | `docs/TREMOR_PORTING.md` | Developer notes: how the low-accuracy stock Vorbis decoder was identified and replaced by full-precision Tremor, and a checklist for other players. |
-| `docs/REPORT.md` | Technical reverse-engineering report: file format, overlays, codec interface, memory, clock profiles, fixes, tests. |
+| `docs/REPORT.md` | Technical reverse-engineering report: file format, overlays, codec interface, memory, clock profiles, hardware accelerators, the stock AAC decoder (Helix), fixes, tests. |
 | `docs/IMAGE_HISTORY.md` | History of the test images and of the defects found on hardware. |
 | `experiments/plc_fec/` | Evaluation (not adopted) of removing PLC and FEC from libopus. |

@@ -555,3 +555,47 @@ The worst DECODE call drops by about 4 %.
 **HIFIEC58.** Ids 14–17 are only used by the OGG enter/exit selectors (all calls to the frequency API were listed across the 90 overlays). Their rows get the MP3 values `{300, 150, 150, 75, 300, 300}`; id 18, shared with APE, is left alone. Patching the values rather than the selector keeps enter and exit symmetric. `rknanofw.py patch-opus … --ogg-clock-mp3` checks the stock values first. The audio core goes from 400 (or 480) to 300 MHz, and the main core from 80 to 150 MHz: the energy balance is unknown. The heaviest Vorbis DECODE call (about 0.77 M instructions per 11.6 ms of audio) leaves a margin of about 4× at 300 MHz. Compared with `HIFIEC56`, only those 4 table rows, the date, the marker and the CRC change.
 
 **Hardware result (2026-10-16).** `HIFIEC58` (2026-09-11, marker "[9]") flashed: all tests pass on every format. Battery life was not measured (4-segment gauge). Back to stock: `HIFIEC59` (2026-09-12).
+
+## 23. Hardware accelerators used by the codecs
+**The chip's accelerators** (RKNanoD TRM, chapters 26–28): HIFIACC at `0x01060000` (FFT/IFFT of 64–1024 points, 32×32→64 MAC, LPC prediction for FLAC/ALAC/APE), and IMDCT36 at `0x60010000` and SYNTH (sub-band synthesis filter) at `0x60050000`, both for MP3.
+
+**Use** (addresses loaded by `ldr` from the literal pools of each module's code; no `movt` into these ranges):
+
+| Module | Accelerators |
+|---|---|
+| 73 MP3 | IMDCT36 + SYNTH |
+| 78 FLAC, 79 ALAC, 80 APE | HIFIACC (registers `+0x40`, `+0xa0`: LPC) |
+| 74 WMA, **75 AAC**, 76 WAV, 77 OGG, 81 DFF, 82 DSF | none |
+
+Every module also uses DMAC2 (`0x01070000`) and the CRU (`0x40180000`): that is the shared codec runtime (DMA, clocks). **AAC is therefore decoded entirely in software.** The library is Rockchip's `aac_dec_lib` ("Version:0.0.1"; source paths `Common\Codec\Audio\AAC\lib\aac_aacdec.c` and `aac_MovFile.c` remain in the module). HIFIACC's FFT could in principle serve the MDCT of AAC, Vorbis or Opus, but no stock codec uses it that way.
+
+## 24. Origin of the AAC decoder: Helix AAC without SBR
+Tables of Helix AAC (RealNetworks; reference copy: `libhelix-aac` from the ESP8266Audio project) searched byte for byte in module 75 (code + data):
+- **identical**: `huffTabSpec` (2,482 B), `huffTabScaleFact`, `sinWindow` and `kbdWindow` (4,608 B each), `sampRateTab`, `predSFBMax`, `channelMapTab`, `elementNumChans`, `sfBandTab*Offset`;
+- **absent**: all the SBR tables (`k0Tab`, `k2Tab`, `huffTabSBR`, `log2Tab`, `cTabA`, `cTabS`, `noiseTab`). A few small tables of `aactabs.c` were not found, probably because they were compiled with a different element type (not checked).
+
+**Conclusion**: `aac_dec_lib` is Helix AAC (fixed point, code from 2003–2005), rebuilt by Rockchip (2012) **without the SBR module**. It decodes AAC-LC; HE-AAC v1 (SBR) and v2 (PS) are not supported. Behaviour on an HE-AAC file was not checked (probably the LC core only, with reduced bandwidth, or a refusal). The module is 72.6 KB of code and 9.2 KB of data.
+
+## 25. Is it worth updating Helix (AAC-LC)?
+**Accuracy** (current Helix from ESP8266Audio, October 2026, built on a PC and compared with ffmpeg's floating-point decoder, same alignment):
+
+| File | SNR | Note |
+|---|---|---|
+| Philip Glass, *Vessels* (M4A, AAC-LC 256 kb/s) | 79.6 dB | max error 3.9 LSB |
+| Philip Glass, *The Grid* (M4A, AAC-LC 256 kb/s) | 58.4 dB | 21 frames out of 38,592 differ, **all of them using PNS** on the affected channel; elsewhere a few LSB at most |
+| Beast In Black, encoded by ffmpeg without PNS or intensity stereo, 256 kb/s | 88.1 dB | max error 1.9 LSB |
+| same, 128 kb/s | 74.0 dB | the remaining differences are clipping (the float reference goes beyond full scale) |
+| default ffmpeg encodes (PNS enabled) | 36–51 dB | random PNS noise, different by design in every decoder |
+
+PNS (perceptual noise substitution) makes the decoder generate noise for some bands, so these differences are legitimate (a patched Helix logging PNS use confirmed that every outlying frame is a PNS frame). Apart from PNS and clipping, Helix is accurate to the 16-bit level. Assumption: Rockchip's build computes the same way (identical tables; not verified by emulating module 75).
+
+**How Rockchip built it**: module 75 contains 88 `smull`/`smlal` instructions (inline 32×32→64 multiplies, as in Helix's optimised `MULSHIFT32`), against a single one in module 77 (the low-accuracy Tremor). Every codec runtime contains a `wfi`: the audio core probably sleeps between two decode calls, so decoder efficiency matters a little at a fixed clock.
+
+**Fixes since 2012** (ESP8266Audio fork): mainly PR #824 (2026-10-07), "Harden Helix AAC decoder against corrupt streams": validation of ICS limits and section lengths, negative byte counts, SBR tables. On 8 streams × 40 corruptions under AddressSanitizer, 187 crashes before, 0 after; bit-identical output on valid streams. The AAC-LC files touched are `noiseless.c`, `decelmnt.c` and `bitstream.c`. The other changes (PROGMEM tables, RP2040/ESP32/RISC-V builds, a ~20 % speed-up that comes from moving tables out of slow flash) do not apply to this player.
+
+**Verdict**:
+- **quality**: no gain expected (Helix LC is already accurate, unlike the stock Vorbis decoder);
+- **robustness**: a real gain, but only for corrupted or truncated files, which could crash the audio core today;
+- **battery**: negligible (the code is already optimised, and the AAC clock profile is fixed at 300 MHz on the audio core, like MP3; see section 22).
+
+Not worth a port for now. If one is ever done, the method of section 20 applies: replace the library in module 75 by current Helix, keep the runtime.
