@@ -40,7 +40,7 @@ measured.
 | Image | Contents |
 |---|---|
 | **`HIFIEC58`** (recommended) | Opus + full-precision Vorbis, Ogg played at the MP3 clock speed. |
-| `HIFIEC56` | Same decoders, stock clock speed for Ogg. |
+| `HIFIEC56` | Opus + full-precision Vorbis, stock clock speed for Ogg. |
 | `HIFIEC52` | Opus only (stock Vorbis decoder). |
 | `HIFIEC50` | Opus only, built with an unmodified libopus (reference build). |
 
