@@ -599,3 +599,88 @@ PNS (perceptual noise substitution) makes the decoder generate noise for some ba
 - **battery**: negligible (the code is already optimised, and the AAC clock profile is fixed at 300 MHz on the audio core, like MP3; see section 22).
 
 Not worth a port for now. If one is ever done, the method of section 20 applies: replace the library in module 75 by current Helix, keep the runtime.
+
+## 26. Stock MP3 decoder and the PCM path
+**Claim checked** (atzkey, author of RECHO): the stock MP3 decoder starts from Rockchip's accelerated implementation. It decodes on the audio ("calc") core and sends the PCM to the main core for the equalizer. The PCM then goes back to the calc core to be written to the DACs, with costly transfers and 16/24/32-bit conversions, at 300–450 MHz, whereas accelerated MP3 would only need 20–40 MHz.
+
+**Module 73** (36.7 KB of code, 50.8 KB of data) is Rockchip's libMad build (source paths `Common\Codec\Audio\Mp3\libMad\mp3_decinternal.c` and `mp3_preparse.c` remain in the module), adapted to the accelerators of section 23:
+- **IMDCT36** (`0x60010000`): for every block, the CPU copies 18 words into the accelerator's SRAM (`memmove` `0x1c3c`, 0x48 bytes), then **busy-waits** (`ldr`/`cmp`/`beq` on the flag at `0x010242ac`, set by the interrupt) instead of sleeping with `wfi`.
+- **SYNTH** (`0x60050000`, SRAM `0x60051000`) is used the same way.
+
+**PCM path** (the same for every codec):
+1. **Audio core → main core.** The ten server overlays (42, 43 and 51–58, all loaded at `0x0308b29c`) each call the DMA copy `0x030609ac` twice. It copies the codec's buffer into the main core's ping-pong buffers `0x0303d47c`/`0x0303447c`.
+2. **Main core, for every buffer** (`0x03066600`–`0x03066776`, resident code):
+   - 16 → 24-bit conversion into 32-bit words (`0x0306644c`);
+   - start-up muting counter (section 27);
+   - equalizer (`0x03089906`), under conditions;
+   - inline 8-bit left shift (24 → 32 bits);
+   - DMA to the I2S1 TX FIFO (`0x40030024`).
+3. **Back to the audio core for the DACs: not found in V3.9.0.** No audio-core module (73–82) contains an I2S address, not even as data. The I2S1 TXDR address appears only in the resident code (`0x0306658c`, `0x03066a00`) and in overlays 11, 14 and 33.
+
+**Verdict**:
+- confirmed: decoding on the audio core, the PCM sent to the main core, and the 16/24/32-bit conversions there;
+- not found: a return trip to the audio core;
+- measured on the device: accelerated MP3 needs about 31 MHz (section 28), so the 20–40 MHz figure holds.
+
+## 27. Equalizer and fades in the PCM path
+**Equalizer.** The mode byte `0x0304a9ac` comes from the table `0x03034390`, indexed by the menu setting: 0 Off, 1 Retro, 2 Bass, 3 Heavy, 4 Pop, 5 Jazz, 6 Unique, 7 Custom. Mode 7 copies the user's 5 bands.
+- **Mode 0 (Off): no processing at all.** `0x03089946` removes the extra clock profile 23/24/25, and overlay 37 is not loaded.
+- **Modes 1–7.** Two things happen:
+  - overlay 37 is loaded (`0x0308aadc`, 1.2 KB of code, 10 KB of BSS). It holds the equalizer filters: a cascade of up to 21 sections per channel, inactive sections skipped. The `i2c_*` strings found in its extracted ELF belong to the resident code, which every overlay ELF includes;
+  - an extra clock profile is entered: 23 (+36 MHz on every column) up to 48 kHz, 24 (+72 MHz) up to 88.2 kHz, 25 (+140 MHz) above.
+- **Even when enabled**, the equalizer is skipped when:
+  - the sample rate is 192 kHz;
+  - the codec index (`0x0304af7c`) is 8 or above, i.e. DFF/DSF;
+  - the source has 24 bits or more;
+  - the buffer is not a multiple of 64 frames;
+  - the flag `+0x98` of `*0x0304a81c` is set.
+
+  Opus (1920-frame buffers) and Vorbis (512) do get it.
+- **Practical consequence**: with the equalizer off, every format saves that extra clock profile.
+
+**Fades: no progressive fade was found.** The per-buffer path above has no fade stage.
+- **Start of playback**: the counter `0x0304a82c` replaces the first decoded buffers with silence. The threshold is 4 in the general case, or 2–3 depending on the codec index and 24-bit sources, so usually 3 silent buffers: about 35 ms for Vorbis, 78 ms for MP3 and 120 ms for Opus (not measured). The counter is reset in at least `0x03087d16`, `0x03087e0c` and `0x03089478`. Whether this happens at every track change, and so cuts the start of gapless albums, is not established.
+- **Pause, seek and stop** (probable roles): the DAC volume (`0x030619ee`, index → register value, 0 = mute) is set to 0 before several commands (`0x03087caa`, `0x03087fc8`, `0x030873f0`, `0x030884ee`, `0x030893a4`). The handler of event 0x2b (`0x03088d32`) then restores it **in one step**.
+- **Not established**:
+  - the exact role of each command;
+  - whether the DAC itself ramps on volume changes.
+
+## 28. Measuring the audio core's load on the device
+**Goal**: measure the real CPU time of the audio core on the device, before lowering any clock profile. The emulator cannot run the MP3 accelerators, and QEMU only counts instructions.
+
+**Method** (a diagnostic build, not published):
+- **Code space.** The codec runtime is the same in modules 73, 74 and 77, offset by a few bytes. It contains a debug `printf` (`0x99e` in module 73, `0x902` in 74/77) that only writes to a buffer nobody reads, followed by two variants that are never called. Stubbing the `printf` to `bx lr` frees 468 contiguous bytes for the probe.
+- **Measurement hook.** The main loop's `bleq __WFI` (`0x16f8` in 73, `0x165c` in 74/77, interrupts masked, no command pending) calls the probe instead. The probe measures:
+  - active cycles, from each wake-up to the next `wfi`: decoding, accelerator busy-waits, waits for file data and ISRs;
+  - total cycles;
+  - both per 1 s window of audio time (`info.time`, ms, written after every DECODE). Windows ending before 3 s of audio are ignored.
+- **Display.** The playing screen reads the bitrate only when a file is opened (`0x03086a26`). The runtime's GETBITRATE call in its OPEN handler (`0x1802` in 73, `0x1766` in 74/77) therefore goes through the probe. It reports the previous track's result in place of the bitrate, one figure per track in rotation, e.g. "1063kbps" = mean active 63 MHz.
+- **The Vorbis exception.** Its codes stay below 400 kb/s: above 500 kb/s the OGG clock selector picks profile 18 (480 MHz, shared with APE), which would skew the measurement. The MP3 and Opus profiles do not depend on the bitrate.
+
+**Time base: what failed and what worked** (observed on the audio core, stock runtime):
+- **DWT `CYCCNT` does not count.** Enabling `DEMCR.TRCENA` and `DWT_CTRL.CYCCNTENA` raises no fault, but every figure reads 0.
+- **The SysTick interrupt never reaches the runtime during playback.**
+  - The runtime programs its own SysTick (`0x8ee` in 73, `0x852` in 74/77): processor clock, a "10 ms" period computed from the core frequency the main core writes at `0x01020024`, and a handler (`0x829a` in 73) whose first timer increments the tick counter `0x01022218`.
+  - On the device that counter stays still: 0 ticks/s. The SysTick therefore does not wake the core, and with the runtime's period most wraps are missed.
+- **The runtime rewrites `LOAD`** on every clock change, so `ticks × (LOAD + 1)` cannot be used either.
+- **The frequency announced to the runtime is wrong.** `0x01020024` holds 47 MHz, so its "10 ms" period really lasts about 1.4 ms.
+- **What works:**
+  - set `LOAD` to `0xFFFFFF` (about 56 ms at 347 MHz) and accumulate the decrease of `VAL` between two reads, allowing at most one wrap. The core is woken by every decode request (every 11.6 ms for Vorbis, 26 ms for MP3, 40 ms for Opus), so this holds unless playback is paused;
+  - drop any window during which the runtime rewrote `LOAD`;
+  - check: total cycles per second of audio must give the real clock.
+
+**Results** (equalizer off, 30 s per track, no pause or seek):
+
+| Format | Files | Mean active | Peak (1 s window) | Share of the audio core |
+|---|---|---|---|---|
+| MP3 (stock libMad + accelerators) | 320 kb/s CBR | 31 MHz | 34 MHz | ≈ 9 % |
+| Ogg Vorbis (Tremor, section 21) | 192 kb/s | 59 MHz | 65 MHz | ≈ 17–19 % |
+| Ogg Opus (this port) | 126–139 kb/s, 2 albums, 3 runs | 63–69 MHz | 65–80 MHz | ≈ 18–23 % |
+
+- **The audio core really runs at about 347 MHz** in all three formats, not at the 300 MHz their clock profiles ask for. The likely cause is that `0x030684ea` rounds to integer dividers of a shared PLL (for example 1044 / 3 = 348). This was not checked by emulating it.
+- **Active time is about twice QEMU's instruction count** of the decoder alone (Opus 33 M/s typical, Vorbis 23–25 M/s). It includes more than one cycle per instruction, and the fixed cost of every decode request: mailbox messages, the PCM DMA and waits for file data. That cost weighs more for Vorbis, which issues about 86 requests per second against about 25 for Opus.
+
+**Next steps (not done):**
+- lower the audio-core column of the MP3, OGG and Opus profiles, keeping at least 1.5 × the measured peak;
+- before that, measure Vorbis at 96 kHz, the worst Opus frames and VBR MP3;
+- measure the actual effect on battery life. The main core, the PLL and the DAC do not change, and waits for file data do not shrink with the audio clock.
